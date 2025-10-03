@@ -2,3 +2,7 @@ db:
     type: sqlite
     path: ./data/feed-data.db
     debug: false
+
+# Custom Jetstream instances
+# jetstream_hosts:
+#     - jetstream.example.com

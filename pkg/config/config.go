@@ -22,6 +22,7 @@ type SqliteConfig struct {
 
 type Config struct {
 	DbConfig interface{} `mapstructure:"db"`
+	JetstreamHosts []string `mapstructure:"jetstream_hosts,omitempty"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
@@ -80,6 +81,15 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := decoder.Decode(rawConfig); err != nil {
 		return nil, err
+	}
+
+	if config.JetstreamHosts == nil {
+		config.JetstreamHosts = []string{
+			"jetstream1.us-east.bsky.network",
+			"jetstream2.us-east.bsky.network",
+			"jetstream1.us-west.bsky.network",
+			"jetstream2.us-west.bsky.network",
+		}
 	}
 
 	return &config, nil
