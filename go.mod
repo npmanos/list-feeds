@@ -3,6 +3,8 @@ module github.com/npmanos/list-feeds
 go 1.24.3
 
 require (
+	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect

@@ -71,7 +71,8 @@ $RECYCLE.BIN/
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon[]
+Icon[
+]
 
 # Thumbnails
 ._*
@@ -108,3 +109,7 @@ Temporary Items
 
 # Log files created by default by the nohup command
 nohup.out
+
+# List feeds specific
+data/*
+!data/config-sample.yml
