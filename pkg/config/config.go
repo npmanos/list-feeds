@@ -12,12 +12,12 @@ type DbType string
 
 const (
 	DEFAULT_CONFIG_FILE = "./data/config.yml"
-	TYPE_SQLITE = "sqlite"
+	TYPE_SQLITE         = "sqlite"
 )
 
 type SqliteConfig struct {
-	Path string `mapstructure:"path"`
-	Debug bool `mapstructure:"debug"`
+	Path  string `mapstructure:"path"`
+	Debug bool   `mapstructure:"debug"`
 }
 
 type Config struct {
