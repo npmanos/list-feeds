@@ -1,0 +1,4 @@
+db:
+    type: sqlite
+    path: ./data/feed-data.db
+    debug: false
