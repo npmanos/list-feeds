@@ -84,3 +84,11 @@ type Like struct {
 	IndexedAt time.Time `bun:",nullzero,notnull,default:current_timestamp"`
 	URI       string    `bun:",notnull,unique"`
 }
+
+type SubscriptionState struct {
+	bun.BaseModel `bun:"table:subscription_state,alias:ss"`
+
+	Service string    `bun:",notnull,unique"`
+	Cursor  int64     `bun:",notnull,default:1"`
+	Lag     time.Time `bun:",notnull,default:current_timestamp"`
+}
