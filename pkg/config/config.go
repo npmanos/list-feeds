@@ -12,10 +12,12 @@ type DbType string
 
 const (
 	DEFAULT_CONFIG_FILE = "./data/config.yml"
+	TYPE_SQLITE = "sqlite"
 )
 
 type SqliteConfig struct {
 	Path string `mapstructure:"path"`
+	Debug bool `mapstructure:"debug"`
 }
 
 type Config struct {
@@ -44,10 +46,10 @@ func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
 		}
 
 		switch typeVal {
-		case "sqlite":
+		case TYPE_SQLITE:
 			var sqliteConfig SqliteConfig
 			err := mapstructure.Decode(stringMap, &sqliteConfig)
-			return sqliteConfig, err
+			return &sqliteConfig, err
 		}
 
 		return data, nil
