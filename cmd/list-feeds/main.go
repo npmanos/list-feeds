@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/npmanos/list-feeds/pkg/config"
 	"github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
+	"github.com/npmanos/list-feeds/pkg/jetstream"
 	"github.com/uptrace/bun/migrate"
 )
 
@@ -45,4 +49,13 @@ func main() {
 	}
 
 	log.Println("Application ready")
+
+	go jetstream.StartConsumer(ctx, cfg.JetstreamHosts)
+
+	log.Println("Running... Press Ctrl+C to exit.")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<- quit
+
+	log.Println("Shutting down...")
 }

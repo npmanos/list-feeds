@@ -21,8 +21,8 @@ type SqliteConfig struct {
 }
 
 type Config struct {
-	DbConfig interface{} `mapstructure:"db"`
-	JetstreamHosts []string `mapstructure:"jetstream_hosts,omitempty"`
+	DbConfig       interface{} `mapstructure:"db"`
+	JetstreamHosts []string    `mapstructure:"jetstream_hosts,omitempty"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
