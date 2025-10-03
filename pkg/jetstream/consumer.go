@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -16,18 +17,21 @@ const (
 	maxBackoff  = 60 * time.Second
 )
 
-type BackoffManager struct {
+var POST_COLLECTIONS = []string{"app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.feed.like"}
+var LIST_MEMBER_COLLECTIONS = []string{"app.bsky.graph.listitem"}
+
+type backoffManager struct {
 	delays map[string]time.Duration
 	mu     sync.Mutex
 }
 
-func NewBackoffManager() *BackoffManager {
-	return &BackoffManager{
+func newBackoffManager() *backoffManager {
+	return &backoffManager{
 		delays: make(map[string]time.Duration),
 	}
 }
 
-func (b *BackoffManager) Wait(host string) {
+func (b *backoffManager) Wait(host string) {
 	b.mu.Lock()
 	delay, ok := b.delays[host]
 	b.mu.Unlock()
@@ -40,7 +44,7 @@ func (b *BackoffManager) Wait(host string) {
 	time.Sleep(delay)
 }
 
-func (b *BackoffManager) Backoff(host string) {
+func (b *backoffManager) Backoff(host string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -54,45 +58,123 @@ func (b *BackoffManager) Backoff(host string) {
 	b.delays[host] = newDelay
 }
 
-func (b *BackoffManager) Reset(host string) {
+func (b *backoffManager) Reset(host string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.delays[host] = 0
 }
 
-func StartConsumer(ctx context.Context, hosts []string) {
-	backoff := NewBackoffManager()
+type JetstreamConsumer struct {
+	name              string
+	hosts             []string
+	cursor            int64
+	wantedDids        []string
+	wantedCollections []string
+	maxSize           uint32
+	extraHeaders      map[string]string
+	backoff           *backoffManager
+}
+
+func NewJetstreamConsumer(
+	name string,
+	hosts []string,
+	cursor int64,
+	wantedDids []string,
+	wantedCollections []string,
+	maxSize uint32,
+	extraHeaders map[string]string,
+) *JetstreamConsumer {
+	_, ok := extraHeaders["User-Agent"]
+	if !ok {
+		extraHeaders["User-Agent"] = "list-feeds/v0.0.1"
+	}
+
+	return &JetstreamConsumer{
+		name:              name,
+		hosts:             hosts,
+		cursor:            cursor,
+		wantedDids:        wantedDids,
+		wantedCollections: wantedCollections,
+		maxSize:           maxSize,
+		extraHeaders:      extraHeaders,
+		backoff:           newBackoffManager(),
+	}
+}
+
+func (c *JetstreamConsumer) buildURL(host string) (string, error) {
+	jetstreamURL, err := url.Parse(fmt.Sprintf("wss://%s/subscribe", host))
+	if err != nil {
+		return "", err
+	}
+
+	params := jetstreamURL.Query()
+
+	if c.cursor > 0 {
+		params.Set("cursor", fmt.Sprintf("%d", c.cursor))
+	}
+
+	for _, did := range c.wantedDids {
+		params.Add("wantedDids", did)
+	}
+
+	for _, collection := range c.wantedCollections {
+		params.Add("wantedCollections", collection)
+	}
+
+	if c.maxSize > 0 {
+		params.Set("maxMessageSizeBytes", fmt.Sprintf("%d", c.maxSize))
+	}
+
+	jetstreamURL.RawQuery = params.Encode()
+
+	return jetstreamURL.String(), nil
+}
+
+func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	for {
-		for _, host := range hosts {
-			url := fmt.Sprintf("wss://%s/subscribe", host)
+		for _, host := range c.hosts {
+			url, err := c.buildURL(host)
+			if err != nil {
+				log.Fatalf("%s: Malformed Jetstream host: %s", c.name, host)
+			}
 
-			backoff.Wait(host)
+			c.backoff.Wait(host)
 
-			log.Printf("Connecting to Jetstream instance: %s", host)
+			log.Printf("%s: Connecting to Jetstream instance: %s", c.name, host)
 
 			conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, http.Header{})
 			if err != nil {
-				log.Printf("Failed to connect to %s: %v", host, err)
-				backoff.Backoff(host)
+				log.Printf("%s: Failed to connect to %s: %v", c.name, host, err)
+				c.backoff.Backoff(host)
 				continue
 			}
 
-			backoff.Reset(host)
-			log.Printf("Succesfully connected to %s", host)
+			c.backoff.Reset(host)
+			log.Printf("%s: Succesfully connected to %s", c.name, host)
 
 			for {
-				messageType, p, err := conn.ReadMessage()
-				if err != nil {
-					log.Printf("Connection to %s lost: %v", host, err)
+				select {
+				case <-ctx.Done():
+					log.Printf("%s: Disconnecting from Jetstream instance: %s", c.name, host)
 					conn.Close()
-					backoff.Backoff(host)
-					break
-				}
+					return
+				default:
+					messageType, p, err := conn.ReadMessage()
+					if err != nil {
+						log.Printf("%s: Connection to %s lost: %v", c.name, host, err)
+						conn.Close()
+						c.backoff.Backoff(host)
+						break
+					}
 
-				if messageType == websocket.TextMessage {
-					// TODO: Process the message (p)
-					log.Printf("Received message: %s", string(p))
+					if messageType == websocket.TextMessage {
+						// TODO: Process the message (p)
+						// log.Printf("%s: Received message: %s", c.name, string(p))
+						if p != nil {
+						}
+					}
 				}
 			}
 		}

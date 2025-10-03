@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/npmanos/list-feeds/pkg/config"
@@ -29,7 +30,7 @@ func main() {
 	}
 	log.Println("Database initialized")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	migrator := migrate.NewMigrator(db, migrations.Migrations)
 
 	if err := migrator.Init(ctx); err != nil {
@@ -50,12 +51,40 @@ func main() {
 
 	log.Println("Application ready")
 
-	go jetstream.StartConsumer(ctx, cfg.JetstreamHosts)
+	postConsumer := jetstream.NewJetstreamConsumer(
+		"Post consumer",
+		cfg.JetstreamHosts,
+		1,
+		[]string{},
+		jetstream.POST_COLLECTIONS,
+		0,
+		map[string]string{},
+	)
+
+	listChangeConsumer := jetstream.NewJetstreamConsumer(
+		"List change consumer",
+		cfg.JetstreamHosts,
+		1,
+		[]string{},
+		jetstream.LIST_MEMBER_COLLECTIONS,
+		0,
+		map[string]string{},
+	)
 
 	log.Println("Running... Press Ctrl+C to exit.")
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<- quit
 
+	wg := new(sync.WaitGroup)
+
+	wg.Add(1)
+	go postConsumer.Start(ctx, wg)
+	wg.Add(1)
+	go listChangeConsumer.Start(ctx, wg)
+
+	<-quit
 	log.Println("Shutting down...")
+	cancel()
+
+	wg.Wait()
 }
