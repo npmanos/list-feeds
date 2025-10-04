@@ -64,40 +64,30 @@ func (b *backoffManager) Reset(host string) {
 	b.delays[host] = 0
 }
 
-type JetstreamConsumer struct {
-	name              string
-	hosts             []string
-	cursor            int64
-	wantedDids        []string
-	wantedCollections []string
-	maxSize           uint32
-	extraHeaders      map[string]string
-	backoff           *backoffManager
+type JetstreamConfig struct {
+	Name              string
+	Hosts             []string
+	Cursor            int64
+	WantedDids        []string
+	WantedCollections []string
+	MaxSize           uint32
+	ExtraHeaders      map[string]string
 }
 
-func NewJetstreamConsumer(
-	name string,
-	hosts []string,
-	cursor int64,
-	wantedDids []string,
-	wantedCollections []string,
-	maxSize uint32,
-	extraHeaders map[string]string,
-) *JetstreamConsumer {
-	_, ok := extraHeaders["User-Agent"]
+type JetstreamConsumer struct {
+	config  *JetstreamConfig
+	backoff *backoffManager
+}
+
+func NewJetstreamConsumer(config *JetstreamConfig) *JetstreamConsumer {
+	_, ok := config.ExtraHeaders["User-Agent"]
 	if !ok {
-		extraHeaders["User-Agent"] = "list-feeds/v0.0.1"
+		config.ExtraHeaders["User-Agent"] = "list-feeds/v0.0.1"
 	}
 
 	return &JetstreamConsumer{
-		name:              name,
-		hosts:             hosts,
-		cursor:            cursor,
-		wantedDids:        wantedDids,
-		wantedCollections: wantedCollections,
-		maxSize:           maxSize,
-		extraHeaders:      extraHeaders,
-		backoff:           newBackoffManager(),
+		config:  config,
+		backoff: newBackoffManager(),
 	}
 }
 
@@ -109,20 +99,20 @@ func (c *JetstreamConsumer) buildURL(host string) (string, error) {
 
 	params := jetstreamURL.Query()
 
-	if c.cursor > 0 {
-		params.Set("cursor", fmt.Sprintf("%d", c.cursor))
+	if c.config.Cursor > 0 {
+		params.Set("cursor", fmt.Sprintf("%d", c.config.Cursor))
 	}
 
-	for _, did := range c.wantedDids {
+	for _, did := range c.config.WantedDids {
 		params.Add("wantedDids", did)
 	}
 
-	for _, collection := range c.wantedCollections {
+	for _, collection := range c.config.WantedCollections {
 		params.Add("wantedCollections", collection)
 	}
 
-	if c.maxSize > 0 {
-		params.Set("maxMessageSizeBytes", fmt.Sprintf("%d", c.maxSize))
+	if c.config.MaxSize > 0 {
+		params.Set("maxMessageSizeBytes", fmt.Sprintf("%d", c.config.MaxSize))
 	}
 
 	jetstreamURL.RawQuery = params.Encode()
@@ -134,36 +124,36 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
-		for _, host := range c.hosts {
+		for _, host := range c.config.Hosts {
 			url, err := c.buildURL(host)
 			if err != nil {
-				log.Fatalf("%s: Malformed Jetstream host: %s", c.name, host)
+				log.Fatalf("%s: Malformed Jetstream host: %s", c.config.Name, host)
 			}
 
 			c.backoff.Wait(host)
 
-			log.Printf("%s: Connecting to Jetstream instance: %s", c.name, host)
+			log.Printf("%s: Connecting to Jetstream instance: %s", c.config.Name, host)
 
 			conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, http.Header{})
 			if err != nil {
-				log.Printf("%s: Failed to connect to %s: %v", c.name, host, err)
+				log.Printf("%s: Failed to connect to %s: %v", c.config.Name, host, err)
 				c.backoff.Backoff(host)
 				continue
 			}
 
 			c.backoff.Reset(host)
-			log.Printf("%s: Succesfully connected to %s", c.name, host)
+			log.Printf("%s: Succesfully connected to %s", c.config.Name, host)
 
 			for {
 				select {
 				case <-ctx.Done():
-					log.Printf("%s: Disconnecting from Jetstream instance: %s", c.name, host)
+					log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
 					conn.Close()
 					return
 				default:
 					messageType, p, err := conn.ReadMessage()
 					if err != nil {
-						log.Printf("%s: Connection to %s lost: %v", c.name, host, err)
+						log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
 						conn.Close()
 						c.backoff.Backoff(host)
 						break
@@ -171,10 +161,10 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 
 					if messageType == websocket.TextMessage {
 						// TODO: Process the message (p)
-						// log.Printf("%s: Received message: %s", c.name, string(p))
+						// log.Printf("%s: Received message: %s", c.config.name, string(p))
 						event, err := UnmarshalEvent(p)
 						if err != nil {
-							log.Printf("%s: Error unmarshaling jetstream event: %v", c.name, err)
+							log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
 						}
 						log.Println(event)
 					}

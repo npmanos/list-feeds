@@ -51,25 +51,25 @@ func main() {
 
 	log.Println("Application ready")
 
-	postConsumer := jetstream.NewJetstreamConsumer(
-		"Post consumer",
-		cfg.JetstreamHosts,
-		1,
-		[]string{},
-		jetstream.POST_COLLECTIONS,
-		0,
-		map[string]string{},
-	)
+	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
+		Name:              "Post consumer",
+		Hosts:             cfg.JetstreamHosts,
+		Cursor:            1,
+		WantedDids:        []string{},
+		WantedCollections: jetstream.POST_COLLECTIONS,
+		MaxSize:           0,
+		ExtraHeaders:      map[string]string{},
+	})
 
-	listChangeConsumer := jetstream.NewJetstreamConsumer(
-		"List change consumer",
-		cfg.JetstreamHosts,
-		1,
-		[]string{},
-		jetstream.LIST_MEMBER_COLLECTIONS,
-		0,
-		map[string]string{},
-	)
+	listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
+		Name:              "List change consumer",
+		Hosts:             cfg.JetstreamHosts,
+		Cursor:            1,
+		WantedDids:        []string{},
+		WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
+		MaxSize:           0,
+		ExtraHeaders:      map[string]string{},
+	})
 
 	log.Println("Running... Press Ctrl+C to exit.")
 	quit := make(chan os.Signal, 1)
