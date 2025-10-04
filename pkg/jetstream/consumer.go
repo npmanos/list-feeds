@@ -172,8 +172,11 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 					if messageType == websocket.TextMessage {
 						// TODO: Process the message (p)
 						// log.Printf("%s: Received message: %s", c.name, string(p))
-						if p != nil {
+						event, err := UnmarshalEvent(p)
+						if err != nil {
+							log.Printf("%s: Error unmarshaling jetstream event: %v", c.name, err)
 						}
+						log.Println(event)
 					}
 				}
 			}
