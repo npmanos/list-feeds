@@ -10,7 +10,7 @@ import (
 )
 
 type ServiceConfig struct {
-	Host string `mapstructure:"host"`
+	Host       string `mapstructure:"host"`
 	ServiceDID string `mapstructure:"service_did,omitempty"`
 }
 
@@ -31,10 +31,10 @@ type ListConfig struct {
 }
 
 type Config struct {
-	ServiceConfig ServiceConfig `mapstructure:"service"`
-	JetstreamHosts []string    `mapstructure:"jetstream_hosts,omitempty"`
-	DbConfig       interface{} `mapstructure:"db"`
-	ListConfigs []ListConfig `mapstructure:"lists"`
+	ServiceConfig  ServiceConfig `mapstructure:"service"`
+	JetstreamHosts []string       `mapstructure:"jetstream_hosts,omitempty"`
+	DbConfig       interface{}    `mapstructure:"db"`
+	ListConfigs    []ListConfig   `mapstructure:"lists"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
