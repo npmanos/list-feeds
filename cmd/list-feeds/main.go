@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/npmanos/list-feeds/pkg/atpclient"
 	"github.com/npmanos/list-feeds/pkg/config"
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
@@ -19,7 +20,6 @@ import (
 	"github.com/uptrace/bun/migrate"
 
 	appbsky "github.com/bluesky-social/indigo/api/bsky"
-	atpclient "github.com/bluesky-social/indigo/atproto/client"
 )
 
 func main() {
@@ -181,7 +181,7 @@ func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB)
 }
 
 func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) ([]string, error) {
-	apiClient := atpclient.NewAPIClient("https://public.api.bsky.app")
+	apiClient := atpclient.GetATProtoClient()
 	allMemberDids := make(map[string]struct{})
 
 	for _, listConfig := range listConfigs {
