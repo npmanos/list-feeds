@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/goccy/go-yaml"
@@ -28,13 +29,29 @@ type SqliteConfig struct {
 
 type ListConfig struct {
 	URI string `mapstructure:"uri"`
+	did string
+}
+
+func (lc *ListConfig) DID() (string, error) {
+	if lc.did == "" {
+		did, _ := strings.CutPrefix(lc.URI, "at://")
+		did = strings.Split(did, "/")[0]
+
+		if !strings.HasPrefix(did, "did:") {
+			return "", fmt.Errorf("couldn't find a valid DID in list URI %s", lc.URI)
+		}
+
+		lc.did = did
+	}
+
+	return lc.did, nil
 }
 
 type Config struct {
 	ServiceConfig  ServiceConfig `mapstructure:"service"`
-	JetstreamHosts []string       `mapstructure:"jetstream_hosts,omitempty"`
-	DbConfig       interface{}    `mapstructure:"db"`
-	ListConfigs    []ListConfig   `mapstructure:"lists"`
+	JetstreamHosts []string      `mapstructure:"jetstream_hosts,omitempty"`
+	DbConfig       interface{}   `mapstructure:"db"`
+	ListConfigs    []ListConfig  `mapstructure:"lists"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {

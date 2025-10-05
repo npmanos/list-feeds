@@ -25,7 +25,6 @@ type List struct {
 	ListMembers []User `bun:"m2m:list_members,join:List=User"`
 }
 
-// TODO: Register many-to-many model in init()
 // https://bun.uptrace.dev/guide/relations.html#many-to-many-relation
 type ListToUser struct {
 	bun.BaseModel `bun:"table:list_members,alias:lm"`
