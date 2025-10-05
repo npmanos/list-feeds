@@ -1,10 +1,13 @@
 package db
 
 import (
+	"context"
 	"time"
 
 	"github.com/uptrace/bun"
 )
+
+type TxFn func(ctx context.Context, tx bun.Tx) error
 
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
