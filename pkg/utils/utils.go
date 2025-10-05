@@ -1,9 +1,9 @@
 package utils
 
-func Map[T, U any](collection []T, f func(T) (U, error)) ([]U, error) {
+func Map[T, U any](collection []T, fn func(T) (U, error)) ([]U, error) {
 	result := make([]U, len(collection))
 	for i, item := range collection {
-		output, err := f(item)
+		output, err := fn(item)
 		if err != nil {
 			return nil, err
 		}
