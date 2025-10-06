@@ -11,8 +11,9 @@ import (
 )
 
 type ServiceConfig struct {
-	Host       string `mapstructure:"host"`
-	ServiceDID string `mapstructure:"service_did,omitempty"`
+	Host       string  `mapstructure:"host"`
+	ServiceDID string  `mapstructure:"service_did,omitempty"`
+	MaxAgeDays float32 `mapstructure:"max_age"`
 }
 
 type DbType string

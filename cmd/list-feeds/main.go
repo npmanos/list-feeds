@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -15,7 +16,6 @@ import (
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
-	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 
@@ -65,12 +65,26 @@ func main() {
 		log.Fatalf("list member sync failed: %v", err)
 	}
 
-	listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
-	if err != nil {
-		log.Fatalln(err)
-	}
+	// listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
 
 	log.Println("Application ready")
+
+	wg := new(sync.WaitGroup)
+
+	dbTxs := make(chan persist.TxFn)
+	wg.Add(1)
+	go persist.StartDbWriter(ctx, db, dbTxs, wg)
+	wg.Add(1)
+	go persist.StartDbJanitor(ctx, cfg.ServiceConfig.MaxAgeDays, dbTxs, db, wg)
+
+	jetstreamEvents := make(chan *jetstream.Event)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go persist.StartPostOpPersister(ctx, jetstreamEvents, dbTxs, wg)
+	}
 
 	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
 		Name:              "Post consumer",
@@ -79,33 +93,35 @@ func main() {
 		WantedDids:        memberDids,
 		WantedCollections: jetstream.POST_COLLECTIONS,
 		MaxSize:           0,
-		ExtraHeaders:      map[string]string{},
+		ExtraHeaders:      http.Header{},
+		EventsChannel:     jetstreamEvents,
 	})
 
-	listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
-		Name:              "List change consumer",
-		Hosts:             cfg.JetstreamHosts,
-		Cursor:            1,
-		WantedDids:        listOwnerDids,
-		WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
-		MaxSize:           0,
-		ExtraHeaders:      map[string]string{},
-	})
+	// listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
+	// 	Name:              "List change consumer",
+	// 	Hosts:             cfg.JetstreamHosts,
+	// 	Cursor:            1,
+	// 	WantedDids:        listOwnerDids,
+	// 	WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
+	// 	MaxSize:           0,
+	// 	ExtraHeaders:      http.Header{},
+	// })
 
 	log.Println("Running... Press Ctrl+C to exit.")
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	wg := new(sync.WaitGroup)
-
 	wg.Add(1)
 	go postConsumer.Start(ctx, wg)
-	wg.Add(1)
-	go listChangeConsumer.Start(ctx, wg)
+	// wg.Add(1)
+	// go listChangeConsumer.Start(ctx, wg)
 
 	<-quit
 	log.Println("Shutting down...")
 	cancel()
+	if err := db.Close(); err != nil {
+		log.Printf("error closing db: %w", err)
+	}
 
 	wg.Wait()
 }

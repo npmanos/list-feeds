@@ -71,7 +71,8 @@ type JetstreamConfig struct {
 	WantedDids        []string
 	WantedCollections []string
 	MaxSize           uint32
-	ExtraHeaders      map[string]string
+	ExtraHeaders      http.Header
+	EventsChannel     chan<- *Event
 }
 
 type JetstreamConsumer struct {
@@ -79,10 +80,16 @@ type JetstreamConsumer struct {
 	backoff *backoffManager
 }
 
+type socketMessage struct {
+	messageType int
+	p           []byte
+	err         error
+}
+
 func NewJetstreamConsumer(config *JetstreamConfig) *JetstreamConsumer {
 	_, ok := config.ExtraHeaders["User-Agent"]
 	if !ok {
-		config.ExtraHeaders["User-Agent"] = "list-feeds/v0.0.1"
+		config.ExtraHeaders.Add("User-Agent", "list-feeds/v0.0.1")
 	}
 
 	return &JetstreamConsumer{
@@ -124,6 +131,12 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		for _, host := range c.config.Hosts {
 			url, err := c.buildURL(host)
 			if err != nil {
@@ -134,7 +147,7 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 
 			log.Printf("%s: Connecting to Jetstream instance: %s", c.config.Name, host)
 
-			conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, http.Header{})
+			conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, c.config.ExtraHeaders)
 			if err != nil {
 				log.Printf("%s: Failed to connect to %s: %v", c.config.Name, host, err)
 				c.backoff.Backoff(host)
@@ -144,29 +157,37 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 			c.backoff.Reset(host)
 			log.Printf("%s: Succesfully connected to %s", c.config.Name, host)
 
+			readChan := make(chan socketMessage)
+			go func() {
+				for {
+					messageType, p, err := conn.ReadMessage()
+					readChan <- socketMessage{messageType, p, err}
+					if err != nil {
+						return
+					}
+				}
+			}()
+
+		dispatchLoop:
 			for {
 				select {
 				case <-ctx.Done():
 					log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
 					conn.Close()
 					return
-				default:
-					messageType, p, err := conn.ReadMessage()
-					if err != nil {
+				case msg := <-readChan:
+					if msg.err != nil {
 						log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
 						conn.Close()
 						c.backoff.Backoff(host)
-						break
+						break dispatchLoop
 					}
-
-					if messageType == websocket.TextMessage {
-						// TODO: Process the message (p)
-						// log.Printf("%s: Received message: %s", c.config.name, string(p))
-						event, err := UnmarshalEvent(p)
+					if msg.messageType == websocket.TextMessage {
+						event, err := UnmarshalEvent(msg.p)
 						if err != nil {
 							log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
 						}
-						log.Println(event)
+						c.config.EventsChannel <- event
 					}
 				}
 			}

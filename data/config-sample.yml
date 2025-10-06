@@ -1,7 +1,11 @@
 service:
     host: atproto.example.com
+
     # Only use this if you want a service did different from did:web
     # service_did: "did:plc:abcde..."
+    
+    # Maximum age of db records, in days
+    max_age: 3
 
 # Custom Jetstream instances
 # jetstream_hosts:

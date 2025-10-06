@@ -3,27 +3,44 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/npmanos/list-feeds/pkg/atpclient"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
+	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
 
-	"github.com/bluesky-social/indigo/api/agnostic"
 	appbsky "github.com/bluesky-social/indigo/api/bsky"
 )
 
-func PersistPostsOps(ctx context.Context, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
+func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.WaitGroup) {
 	defer wg.Done()
+	log.Printf("Starting db writer...")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Stopping db writer...")
+			return
+		case txFn := <-dbTxs:
+			if err := db.RunInTx(ctx, nil, txFn); err != nil {
+				log.Printf("failed to execute transaction: %w", err)
+			}
+		}
+	}
+}
+
+func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
+	defer wg.Done()
+	log.Printf("Starting post op persister...")
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("Stopping post op persister...")
 			return
 		case event := <-events:
 			switch event.Kind {
@@ -31,22 +48,35 @@ func PersistPostsOps(ctx context.Context, events <-chan *jetstream.Event, dbTxs 
 				continue
 			case jetstream.CommitEvent:
 				commit := event.Commit
+
+				if commit.Operation == jetstream.CommitDelete {
+					log.Printf("Delete event: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
+					if fn := deleteRecord(event); fn != nil {
+						dbTxs <- fn
+					}
+
+					continue
+				}
+
 				switch commit.Record.(type) {
 				case jetstream.PostRecord:
+					log.Printf("New post: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistPost(event); err != nil {
-						log.Printf("unable to save post: %v", err)
+						log.Printf("unable to save post: %w", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.RepostRecord:
+					log.Printf("New repost: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistRepost(event); err != nil {
-						log.Printf("unable to save repost: %v", err)
+						log.Printf("unable to save repost: %w", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.LikeRecord:
+					log.Printf("New like: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistLike(event); err != nil {
-						log.Printf("unable to save like: %v", err)
+						log.Printf("unable to save like: %w", err)
 					} else {
 						dbTxs <- fn
 					}
@@ -56,17 +86,72 @@ func PersistPostsOps(ctx context.Context, events <-chan *jetstream.Event, dbTxs 
 	}
 }
 
-func WriteDb(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.WaitGroup) {
+func StartDbJanitor(ctx context.Context, maxAgeDays float32, dbTxs chan<- TxFn, db *bun.DB, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	if maxAgeDays <= 0 {
+		return
+	}
+
+	log.Println("Starting database janitor...")
+	dbTxs <- pruneDb(maxAgeDays)
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <- ctx.Done():
+		case <-ticker.C:
+			dbTxs <- pruneDb(maxAgeDays)
+		case <-ctx.Done():
+			log.Println("Stopping database janitor...")
 			return
-		case txFn := <- dbTxs:
-			if err := db.RunInTx(ctx, nil, txFn); err != nil {
-				log.Printf("failed to execute transaction: %v", err)
-			}
 		}
+	}
+}
+
+func pruneDb(maxAgeDays float32) TxFn {
+	return func(ctx context.Context, tx bun.Tx) error {
+		log.Printf("Pruning records older than %.2f days...", maxAgeDays)
+
+		maxAgeDuration := time.Duration(maxAgeDays*24) * time.Hour
+		cutoffTime := time.Now().Add(-maxAgeDuration)
+
+		_, err := tx.NewDelete().Model((*Like)(nil)).
+			Where("created_at < ?", cutoffTime).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to prune old likes: %w", err)
+		}
+
+		_, err = tx.NewDelete().Model((*Repost)(nil)).
+			Where("created_at < ?", cutoffTime).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to prune old reposts: %w", err)
+		}
+
+		likesExist := tx.NewSelect().Model((*Like)(nil)).Where("post_id = p.id")
+		repostsExist := tx.NewSelect().Model((*Repost)(nil)).Where("post_id = p.id")
+		parentsExist := tx.NewSelect().Model((*Post)(nil)).Where("reply_parent_id = p.id")
+		rootsExist := tx.NewSelect().Model((*Post)(nil)).Where("reply_root_id = p.id")
+
+		_, err = tx.NewDelete().
+			// Alias the posts table as "p" so the subqueries can reference it.
+			TableExpr("posts AS p").
+			Where("p.created_at < ?", cutoffTime).
+			Where("NOT EXISTS (?)", likesExist).
+			Where("NOT EXISTS (?)", repostsExist).
+			Where("NOT EXISTS (?)", parentsExist).
+			Where("NOT EXISTS (?)", rootsExist).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to prune old posts: %w", err)
+		}
+
+		log.Println("Pruned old records")
+
+		return nil
 	}
 }
 
@@ -74,7 +159,7 @@ func persistPost(event *jetstream.Event) (TxFn, error) {
 	record, ok := event.Commit.Record.(jetstream.PostRecord)
 	if !ok {
 		return nil, errors.New("was not a post record")
-	} 
+	}
 
 	fn := func(ctx context.Context, tx bun.Tx) error {
 		author, err := upsertUser(ctx, event.DID, tx)
@@ -83,9 +168,9 @@ func persistPost(event *jetstream.Event) (TxFn, error) {
 		}
 
 		post := Post{
-			URI: fmt.Sprintf("at://%s/%s/%s", event.DID, record.Type, event.Commit.RKey),
-			CID: event.Commit.CID,
-			Author: author,
+			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
+			CID:       event.Commit.CID,
+			Author:    author,
 			CreatedAt: record.CreatedAt,
 		}
 
@@ -129,10 +214,11 @@ func persistRepost(event *jetstream.Event) (TxFn, error) {
 			return err
 		}
 
-		repost := Repost {
-			Reposter: reposter,
-			Post: post,
+		repost := Repost{
+			Reposter:  reposter,
+			Post:      post,
 			CreatedAt: record.CreatedAt,
+			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 		}
 
 		_, err = tx.NewInsert().Model(&repost).Exec(ctx)
@@ -160,10 +246,11 @@ func persistLike(event *jetstream.Event) (TxFn, error) {
 			return err
 		}
 
-		like := Like {
-			Liker: liker,
-			Post: post,
+		like := Like{
+			Liker:     liker,
+			Post:      post,
 			CreatedAt: record.CreatedAt,
+			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 		}
 
 		_, err = tx.NewInsert().Model(&like).Exec(ctx)
@@ -174,17 +261,6 @@ func persistLike(event *jetstream.Event) (TxFn, error) {
 	return fn, nil
 }
 
-func extractDID(atURI string) (string, error) {
-	did, _ := strings.CutPrefix(atURI, "at://")
-	did = strings.Split(did, "/")[0]
-
-	if !strings.HasPrefix(did, "did:") {
-		return "", fmt.Errorf("couldn't find a valid DID in list URI %s", atURI)
-	}
-
-	return did, nil
-}
-
 func upsertUser(ctx context.Context, did string, tx bun.Tx) (*User, error) {
 	user := User{
 		DID: did,
@@ -193,8 +269,12 @@ func upsertUser(ctx context.Context, did string, tx bun.Tx) (*User, error) {
 	if _, err := tx.NewInsert().Model(&user).
 		Ignore().
 		Returning("*").
-		Exec(ctx, &user); err != nil {
+		Exec(ctx, &user); err != nil && err != sql.ErrNoRows {
 		return nil, err
+	} else if err == sql.ErrNoRows {
+		if err := tx.NewSelect().Model(&user).Where("did = ?", user.DID).Scan(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	return &user, nil
@@ -204,16 +284,16 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 	var post Post
 	err := tx.NewSelect().Model(&post).
 		Where("uri = ?", atURI).
-		Scan(ctx);
-	
+		Scan(ctx)
+
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	
+
 	if err == nil {
 		return &post, nil
 	}
-	
+
 	atpClient := atpclient.GetATProtoClient()
 	apiPosts, err := appbsky.FeedGetPosts(ctx, atpClient, []string{atURI})
 	if err != nil {
@@ -226,29 +306,43 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 
 	apiPost := apiPosts.Posts[0]
 
-
 	author, err := upsertUser(ctx, apiPost.Author.Did, tx)
 	if err != nil {
 		return nil, err
 	}
 
-	postRkey := strings.TrimPrefix(apiPost.Uri, fmt.Sprintf("at://%s/app.bsky.feed.post/", author.DID))
-
-	postRecordOutput, err := agnostic.RepoGetRecord(ctx, atpClient, apiPost.Cid, "app.bsky.feed.post", author.DID, postRkey)
-	if err != nil {
-		return nil, err
+	apiPostRecord, ok := apiPost.Record.Val.(*appbsky.FeedPost)
+	if !ok {
+		return nil, fmt.Errorf("failed to assert record as *appbsky.FeedPost")
 	}
 
-	var postRecord jetstream.PostRecord
-	err = json.Unmarshal(*postRecordOutput.Value, &postRecord)
+	apiCreatedAt, err := time.Parse(time.RFC3339, apiPostRecord.CreatedAt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse apiCreatedAt: %w", err)
 	}
 
-	post = Post {
-		URI: apiPost.Uri,
-		CID: apiPost.Cid,
-		Author: author,
+	postRecord := jetstream.PostRecord{
+		Type:      apiPostRecord.LexiconTypeID,
+		CreatedAt: apiCreatedAt,
+	}
+
+	if apiPostRecord.Reply != nil {
+		postRecord.Reply = &jetstream.PostReply{
+			Parent: &jetstream.PostRef{
+				CID: apiPostRecord.Reply.Parent.Cid,
+				URI: apiPostRecord.Reply.Parent.Uri,
+			},
+			Root: &jetstream.PostRef{
+				CID: apiPostRecord.Reply.Root.Cid,
+				URI: apiPostRecord.Reply.Root.Uri,
+			},
+		}
+	}
+
+	post = Post{
+		URI:       apiPost.Uri,
+		CID:       apiPost.Cid,
+		Author:    author,
 		CreatedAt: postRecord.CreatedAt,
 	}
 
@@ -272,8 +366,35 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 		Ignore().
 		Returning("*").
 		Exec(ctx, &post); err != nil {
-			return nil, err
-		}
-	
+		return nil, err
+	}
+	log.Printf("Upserted post: %v", post)
+
 	return &post, nil
+}
+
+func deleteRecord(event *jetstream.Event) TxFn {
+	commit := event.Commit
+	uri := utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey)
+
+	switch commit.Collection {
+	case "app.bsky.feed.post":
+		return makeDeleteFn(uri, (*Post)(nil))
+	case "app.bsky.feed.repost":
+		return makeDeleteFn(uri, (*Repost)(nil))
+	case "app.bsky.feed.like":
+		return makeDeleteFn(uri, (*Like)(nil))
+	default:
+		return nil
+	}
+}
+
+func makeDeleteFn(uri string, model interface{}) TxFn {
+	return func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewDelete().Model(model).Where("uri = ?", uri).Exec(ctx)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
 }
