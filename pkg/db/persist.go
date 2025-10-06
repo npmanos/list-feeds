@@ -47,8 +47,8 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 		case event := <-events:
 			select{
 			case <- cursorUpdate.C:
-				if err := writeCursor(serviceName, event.Cursor); err != nil {
-					log.Printf("cursor update failed: %v", err)
+				if fn := writeCursor(serviceName, event.Cursor); fn != nil {
+					dbTxs <- fn
 				}
 			default:
 			}
