@@ -18,7 +18,7 @@ func Initialize(cfg *config.Config) (*bun.DB, error) {
 
 	switch c := cfg.DbConfig.(type) {
 	case *config.SqliteConfig:
-		sqldb, err = sql.Open(sqliteshim.ShimName, "file:"+c.Path+"?cache=shared&_journal_mode=WAL&_busy_timeout=5000")
+		sqldb, err = sql.Open(sqliteshim.ShimName, "file:"+c.Path+"?_pragma=busy_timeout=5000&_pragma=journal_mode=WAL")
 		if err != nil {
 			return nil, err
 		}
