@@ -58,6 +58,9 @@ func main() {
 	}
 
 	serviceName, err := initSubState(ctx, cfg.ServiceConfig, db)
+	if err != nil {
+		log.Fatalf("unable to initialize subcription state: %v", err)
+	}
 
 	if err := syncLists(ctx, cfg.ListConfigs, db); err != nil {
 		log.Fatalf("list sync failed: %v", err)
@@ -94,7 +97,7 @@ func main() {
 	subState := persist.SubscriptionState{Service: serviceName}
 	cursor, err := subState.GetCursor(ctx, db)
 	if err != nil {
-		log.Fatalf("failed to load cursor from db: %w", err)
+		log.Fatalf("failed to load cursor from db: %v", err)
 	}
 
 	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
