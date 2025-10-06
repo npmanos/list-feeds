@@ -120,7 +120,7 @@ func main() {
 	log.Println("Shutting down...")
 	cancel()
 	if err := db.Close(); err != nil {
-		log.Printf("error closing db: %w", err)
+		log.Printf("error closing db: %v", err)
 	}
 
 	wg.Wait()
