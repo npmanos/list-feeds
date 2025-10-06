@@ -50,7 +50,6 @@ func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, d
 				commit := event.Commit
 
 				if commit.Operation == jetstream.CommitDelete {
-					log.Printf("Delete event: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn := deleteRecord(event); fn != nil {
 						dbTxs <- fn
 					}
@@ -60,21 +59,18 @@ func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, d
 
 				switch commit.Record.(type) {
 				case jetstream.PostRecord:
-					log.Printf("New post: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistPost(event); err != nil {
 						log.Printf("unable to save post: %v", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.RepostRecord:
-					log.Printf("New repost: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistRepost(event); err != nil {
 						log.Printf("unable to save repost: %v", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.LikeRecord:
-					log.Printf("New like: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistLike(event); err != nil {
 						log.Printf("unable to save like: %v", err)
 					} else {
@@ -215,10 +211,12 @@ func persistRepost(event *jetstream.Event) (TxFn, error) {
 		}
 
 		repost := Repost{
-			Reposter:  reposter,
-			Post:      post,
-			CreatedAt: record.CreatedAt,
-			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
+			ReposterID: reposter.ID,
+			Reposter:   reposter,
+			PostID:     post.ID,
+			Post:       post,
+			CreatedAt:  record.CreatedAt,
+			URI:        utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 		}
 
 		_, err = tx.NewInsert().Model(&repost).Exec(ctx)
@@ -247,7 +245,9 @@ func persistLike(event *jetstream.Event) (TxFn, error) {
 		}
 
 		like := Like{
+			LikerID:   liker.ID,
 			Liker:     liker,
+			PostID:    post.ID,
 			Post:      post,
 			CreatedAt: record.CreatedAt,
 			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
@@ -268,13 +268,12 @@ func upsertUser(ctx context.Context, did string, tx bun.Tx) (*User, error) {
 
 	if _, err := tx.NewInsert().Model(&user).
 		Ignore().
-		Returning("*").
 		Exec(ctx, &user); err != nil && err != sql.ErrNoRows {
-		return nil, err
-	} else if err == sql.ErrNoRows {
-		if err := tx.NewSelect().Model(&user).Where("did = ?", user.DID).Scan(ctx); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("upsertUser blind insert failed: %w", err)
+	}
+
+	if err := tx.NewSelect().Model(&user).Where("did = ?", user.DID).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("upsertUser select failed: %w", err)
 	}
 
 	return &user, nil
@@ -362,13 +361,14 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 		post.ReplyRoot = rootPost
 	}
 
-	if _, err := tx.NewInsert().Model(&post).
-		Ignore().
-		Returning("*").
-		Exec(ctx, &post); err != nil {
-		return nil, err
+	_, err = tx.NewInsert().Model(&post).Ignore().Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upsertThreadPost blind insert failed: %w", err)
 	}
-	log.Printf("Upserted post: %v", post)
+
+	if err := tx.NewSelect().Model(&post).Where("uri = ?", post.URI).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("upsertThreadPost select failed: %w", err)
+	}
 
 	return &post, nil
 }

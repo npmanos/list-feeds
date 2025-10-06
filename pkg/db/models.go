@@ -64,9 +64,10 @@ type Post struct {
 type Repost struct {
 	bun.BaseModel `bun:"table:reposts,alias:rp"`
 
-	ReposterID int64 `bun:",pk"`
+	ID         int64 `bun:",pk,autoincrement"`
+	ReposterID int64 `bun:",unique:repost"`
 	Reposter   *User `bun:"rel:belongs-to,join:reposter_id=id"`
-	PostID     int64 `bun:",pk"`
+	PostID     int64 `bun:",unique:repost"`
 	Post       *Post `bun:"rel:belongs-to,join:post_id=id"`
 
 	CreatedAt time.Time `bun:",notnull"`
@@ -77,9 +78,10 @@ type Repost struct {
 type Like struct {
 	bun.BaseModel `bun:"table:likes,alias:lp"`
 
-	LikerID int64 `bun:",pk"`
+	ID      int64 `bun:",pk,autoincrement"`
+	LikerID int64 `bun:",unique:like"`
 	Liker   *User `bun:"rel:belongs-to,join:liker_id=id"`
-	PostID  int64 `bun:",pk"`
+	PostID  int64 `bun:",unique:like"`
 	Post    *Post `bun:"rel:belongs-to,join:post_id=id"`
 
 	CreatedAt time.Time `bun:",notnull"`
