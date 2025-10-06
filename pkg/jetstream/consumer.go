@@ -107,7 +107,8 @@ func (c *JetstreamConsumer) buildURL(host string) (string, error) {
 	params := jetstreamURL.Query()
 
 	if c.config.Cursor > 0 {
-		params.Set("cursor", fmt.Sprintf("%d", c.config.Cursor))
+		var adjustedCursor = (time.Duration(c.config.Cursor) * time.Microsecond) - (5 * time.Second)
+		params.Set("cursor", fmt.Sprintf("%d", adjustedCursor.Microseconds()))
 	}
 
 	for _, did := range c.config.WantedDids {
@@ -187,6 +188,7 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 						if err != nil {
 							log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
 						}
+						c.config.Cursor = event.Cursor
 						c.config.EventsChannel <- event
 					}
 				}

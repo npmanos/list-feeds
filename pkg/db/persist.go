@@ -33,9 +33,11 @@ func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.
 	}
 }
 
-func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
+func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Printf("Starting post op persister...")
+	cursorUpdate := time.NewTicker(5 * time.Second)
+	defer cursorUpdate.Stop()
 
 	for {
 		select {
@@ -43,6 +45,14 @@ func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, d
 			log.Printf("Stopping post op persister...")
 			return
 		case event := <-events:
+			select{
+			case <- cursorUpdate.C:
+				if err := writeCursor(serviceName, event.Cursor); err != nil {
+					log.Printf("cursor update failed: %v", err)
+				}
+			default:
+			}
+
 			switch event.Kind {
 			case jetstream.AccountEvent, jetstream.IdentityEvent:
 				continue
@@ -395,6 +405,18 @@ func makeDeleteFn(uri string, model interface{}) TxFn {
 		if err == sql.ErrNoRows {
 			return nil
 		}
+		return err
+	}
+}
+
+func writeCursor(serviceName string, cursor int64) TxFn {
+	return func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewUpdate().Model((*SubscriptionState)(nil)).
+			Column("cursor").
+			Set("cursor = ?", cursor).
+			Where("service = ?", serviceName).
+			Exec(ctx)
+		
 		return err
 	}
 }

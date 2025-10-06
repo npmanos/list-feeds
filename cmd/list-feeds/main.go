@@ -35,6 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize database: %v", err)
 	}
+	defer db.Close()
 	log.Println("Database initialized")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,6 +56,8 @@ func main() {
 	} else {
 		log.Printf("Applied migrations: %s", group)
 	}
+
+	serviceName, err := initSubState(ctx, cfg.ServiceConfig, db)
 
 	if err := syncLists(ctx, cfg.ListConfigs, db); err != nil {
 		log.Fatalf("list sync failed: %v", err)
@@ -81,15 +84,23 @@ func main() {
 	go persist.StartDbJanitor(ctx, cfg.ServiceConfig.MaxAgeDays, dbTxs, db, wg)
 
 	jetstreamEvents := make(chan *jetstream.Event)
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go persist.StartPostOpPersister(ctx, jetstreamEvents, dbTxs, wg)
+	// for i := 0; i < 4; i++ {
+	// 	wg.Add(1)
+	// 	go persist.StartPostOpPersister(ctx, serviceName, jetstreamEvents, dbTxs, wg)
+	// }
+	wg.Add(1)
+	go persist.StartPostOpPersister(ctx, serviceName, jetstreamEvents, dbTxs, wg)
+
+	subState := persist.SubscriptionState{Service: serviceName}
+	cursor, err := subState.GetCursor(ctx, db)
+	if err != nil {
+		log.Fatalf("failed to load cursor from db: %w", err)
 	}
 
 	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
 		Name:              "Post consumer",
 		Hosts:             cfg.JetstreamHosts,
-		Cursor:            1,
+		Cursor:            cursor,
 		WantedDids:        memberDids,
 		WantedCollections: jetstream.POST_COLLECTIONS,
 		MaxSize:           0,
@@ -119,9 +130,6 @@ func main() {
 	<-quit
 	log.Println("Shutting down...")
 	cancel()
-	if err := db.Close(); err != nil {
-		log.Printf("error closing db: %v", err)
-	}
 
 	wg.Wait()
 }
@@ -321,4 +329,21 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 	}
 
 	return result, nil
+}
+
+func initSubState(ctx context.Context, cfg config.ServiceConfig, db *bun.DB) (string, error) {
+	var serviceName string
+	if serviceName = cfg.ServiceDID; cfg.ServiceDID == "" {
+		serviceName = fmt.Sprintf("did:web:%s", cfg.Host)
+	}
+
+	subState := persist.SubscriptionState {
+		Service: serviceName,
+	}
+	
+	if _, err := db.NewInsert().Model(&subState).Ignore().Exec(ctx); err != nil {
+		return "", fmt.Errorf("unable to set subscription state: %w", err)
+	}
+
+	return serviceName, nil
 }
