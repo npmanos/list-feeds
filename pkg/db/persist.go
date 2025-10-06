@@ -27,7 +27,7 @@ func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.
 			return
 		case txFn := <-dbTxs:
 			if err := db.RunInTx(ctx, nil, txFn); err != nil {
-				log.Printf("failed to execute transaction: %w", err)
+				log.Printf("failed to execute transaction: %v", err)
 			}
 		}
 	}
@@ -62,21 +62,21 @@ func StartPostOpPersister(ctx context.Context, events <-chan *jetstream.Event, d
 				case jetstream.PostRecord:
 					log.Printf("New post: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistPost(event); err != nil {
-						log.Printf("unable to save post: %w", err)
+						log.Printf("unable to save post: %v", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.RepostRecord:
 					log.Printf("New repost: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistRepost(event); err != nil {
-						log.Printf("unable to save repost: %w", err)
+						log.Printf("unable to save repost: %v", err)
 					} else {
 						dbTxs <- fn
 					}
 				case jetstream.LikeRecord:
 					log.Printf("New like: %s", utils.BuildAtURI(event.DID, commit.Collection, commit.RKey))
 					if fn, err := persistLike(event); err != nil {
-						log.Printf("unable to save like: %w", err)
+						log.Printf("unable to save like: %v", err)
 					} else {
 						dbTxs <- fn
 					}
