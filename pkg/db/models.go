@@ -32,10 +32,11 @@ type List struct {
 type ListToUser struct {
 	bun.BaseModel `bun:"table:list_members,alias:lm"`
 
-	ListID int64 `bun:",pk"`
-	List   *List `bun:"rel:belongs-to,join:list_id=id"`
-	UserID int64 `bun:",pk"`
-	User   *User `bun:"rel:belongs-to,join:user_id=id"`
+	ListID int64  `bun:",pk"`
+	List   *List  `bun:"rel:belongs-to,join:list_id=id"`
+	UserID int64  `bun:",pk"`
+	User   *User  `bun:"rel:belongs-to,join:user_id=id"`
+	URI   string  `bun:"uri,unique"`
 }
 
 type Post struct {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 
@@ -209,38 +210,16 @@ func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB)
 
 func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) ([]string, error) {
 	apiClient := atpclient.GetATProtoClient()
-	allMemberDids := make(map[string]struct{})
+	allApiMembers := make(map[string]*persist.ListToUser)
 
-	for _, listConfig := range listConfigs {
-		log.Printf("Syncing members for list %s", listConfig.URI)
-
-		apiMembers := make(map[string]*appbsky.GraphDefs_ListItemView)
-		var cursor string
-		for {
-			listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.URI)
-
-			if err != nil {
-				return nil, fmt.Errorf("failed to get list members from API for %s: %w", listConfig.URI, err)
-			}
-
-			for _, member := range listMembers.Items {
-				apiMembers[member.Subject.Did] = member
-				allMemberDids[member.Subject.Did] = struct{}{}
-			}
-
-			if listMembers.Cursor == nil || *listMembers.Cursor == "" {
-				break
-			}
-			cursor = *listMembers.Cursor
-		}
-
-		err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, listConfig := range listConfigs {
+			log.Printf("Syncing members for list %s", listConfig.URI)
+			
 			var list persist.List
-
 			err := tx.NewSelect().
 				Model(&list).
 				Where("uri = ?", listConfig.URI).
-				Relation("ListMembers").
 				Scan(ctx)
 
 			if err != nil && err != sql.ErrNoRows {
@@ -249,89 +228,100 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 
 			list.URI = listConfig.URI
 
-			dbMembers := make(map[string]struct{})
-			for _, member := range list.ListMembers {
-				dbMembers[member.DID] = struct{}{}
-			}
+			var cursor string
+			for {
+				listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.URI)
 
-			var memberDidsToAdd []string
-			var memberDidsToRemove []string
-
-			for did := range apiMembers {
-				if _, found := dbMembers[did]; !found {
-					memberDidsToAdd = append(memberDidsToAdd, did)
-				}
-			}
-
-			for did := range dbMembers {
-				if _, found := apiMembers[did]; !found {
-					memberDidsToRemove = append(memberDidsToRemove, did)
-				}
-			}
-
-			if len(memberDidsToAdd) > 0 {
-				log.Printf("Adding %d members to list %s", len(memberDidsToAdd), listConfig.URI)
-
-				var usersToInsert []persist.User
-				for _, did := range memberDidsToAdd {
-					usersToInsert = append(usersToInsert, persist.User{DID: did})
-				}
-
-				_, err := tx.NewInsert().Model(&usersToInsert).
-					On("CONFLICT (did) DO NOTHING").
-					Exec(ctx)
 				if err != nil {
-					return fmt.Errorf("failed to bulk insert users: %w", err)
+					return fmt.Errorf("failed to get list members from API for %s: %w", listConfig.URI, err)
 				}
 
-				var usersForJoin []persist.User
-				if err := tx.NewSelect().Model(&usersForJoin).Where("did IN (?)", bun.In(memberDidsToAdd)).Scan(ctx); err != nil {
-					return fmt.Errorf("failed to select users for join: %w", err)
-				}
+				for _, member := range listMembers.Items {
+					user := persist.User{
+						DID: member.Subject.Did,
+					}
 
-				var membersToAdd []persist.ListToUser
-				for i := range usersForJoin {
-					membersToAdd = append(membersToAdd, persist.ListToUser{
+					if _, err := tx.NewInsert().Model(&user).
+						Ignore().
+						Exec(ctx, &user); err != nil && err != sql.ErrNoRows {
+						return fmt.Errorf("upsertUser blind insert failed: %w", err)
+					}
+
+					if err := tx.NewSelect().Model(&user).Where("did = ?", user.DID).Scan(ctx); err != nil {
+						return fmt.Errorf("upsertUser select failed: %w", err)
+					}
+
+					allApiMembers[member.Uri] = &persist.ListToUser{
+						UserID: user.ID,
+						User: &user,
 						ListID: list.ID,
-						UserID: usersForJoin[i].ID,
-					})
+						List: &list,
+						URI: member.Uri,
+					}
 				}
 
-				_, err = tx.NewInsert().Model(&membersToAdd).Exec(ctx)
-				if err != nil {
-					return fmt.Errorf("failed to insert list members: %w", err)
+				if listMembers.Cursor == nil || *listMembers.Cursor == "" {
+					break
 				}
+				cursor = *listMembers.Cursor
 			}
 
-			if len(memberDidsToRemove) > 0 {
-				log.Printf("Removing %d members from list %s", len(memberDidsToRemove), listConfig.URI)
-				var usersToRemove []persist.User
-				if err := tx.NewSelect().Model(&usersToRemove).Where("did IN (?)", bun.In(memberDidsToRemove)).Scan(ctx); err != nil {
-					return err
-				}
-
-				_, err := tx.NewDelete().Model((*persist.ListToUser)(nil)).
-					Where("list_id = ? AND user_id IN (?)", list.ID, bun.In(usersToRemove)).
-					Exec(ctx)
-				if err != nil {
-					return err
-				}
+		}
+		var dbURIs []string
+		if err := tx.NewSelect().Model((*persist.ListToUser)(nil)).
+			Column("uri").
+			Scan(ctx, &dbURIs); err != nil && err != sql.ErrNoRows {
+				return err
 			}
+		
+		dbURIsMap := make(map[string]struct{})
+		for _, uri := range dbURIs {
+			dbURIsMap[uri] = struct{}{}
+		}
 
-			return nil
-		})
+		var membersToAdd []*persist.ListToUser
+		for uri, listToUser := range allApiMembers {
+			if _, found := dbURIsMap[uri]; !found {
+				membersToAdd = append(membersToAdd, listToUser)
+			}
+		}
 
-		if err != nil {
-			return nil, err
+		var membersToDelete []string
+		for uri, _ := range dbURIsMap {
+			if _, found := allApiMembers[uri]; !found {
+				membersToDelete = append(membersToDelete, uri)
+			}
+		}
+
+		if len(membersToAdd) > 0 {
+			if _, err := tx.NewInsert().Model(&membersToAdd).Exec(ctx); err != nil {
+				return fmt.Errorf("adding users to lists failed: %w", err)
+			}
+		}
+
+		if len(membersToDelete) > 0 {
+			if _, err := tx.NewDelete().Model((*persist.ListToUser)(nil)).
+				Where("uri IN (?)", membersToDelete).
+				Exec(ctx); err != nil {
+					return fmt.Errorf("removing users from lists failed: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	var result []string
+	for _, member := range allApiMembers {
+		if !slices.Contains(result, member.User.DID) {
+			result = append(result, member.User.DID)
 		}
 	}
 
-	result := make([]string, 0, len(allMemberDids))
-	for did := range allMemberDids {
-		result = append(result, did)
+	if len(result) == 0 {
+		result = nil
 	}
 
-	return result, nil
+	return result, err
 }
 
 func initSubState(ctx context.Context, cfg config.ServiceConfig, db *bun.DB) (string, error) {
