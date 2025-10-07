@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.
 func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Printf("Starting post op persister...")
+	var lastCursor int64 = 0
 	cursorUpdate := time.NewTicker(5 * time.Second)
 	defer cursorUpdate.Stop()
 
@@ -45,11 +47,17 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 			log.Printf("Stopping post op persister...")
 			return
 		case event := <-events:
-			select{
+			select {
 			case <- cursorUpdate.C:
-				if fn := writeCursor(serviceName, event.Cursor); fn != nil {
-					dbTxs <- fn
+				if event.Cursor > lastCursor {
+					if fn := writeCursor(serviceName, event.Cursor); fn != nil {
+						dbTxs <- fn
+						lastCursor = event.Cursor
+						log.Printf("Cursor: %d", lastCursor)
+					}
 				}
+
+				
 			default:
 			}
 
@@ -60,7 +68,7 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 				commit := event.Commit
 
 				if commit.Operation == jetstream.CommitDelete {
-					if fn := deleteRecord(event); fn != nil {
+					if fn := deletePostOpRecord(event); fn != nil {
 						dbTxs <- fn
 					}
 
@@ -112,6 +120,48 @@ func StartDbJanitor(ctx context.Context, maxAgeDays float32, dbTxs chan<- TxFn, 
 		case <-ctx.Done():
 			log.Println("Stopping database janitor...")
 			return
+		}
+	}
+}
+
+func StartListMemberPersister(
+	ctx context.Context,
+	jetstreamHosts []string,
+	listMemberEvents <-chan *jetstream.Event,
+	postOpEvents chan<- *jetstream.Event,
+	didUpdates chan<- *jetstream.ListMemberUpdate,
+	dbTxs chan<- TxFn,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+	log.Printf("Starting list member persister...")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Stopping list member persister...")
+			return
+		case event := <-listMemberEvents:
+			switch event.Kind {
+			case jetstream.AccountEvent, jetstream.IdentityEvent:
+				continue
+			case jetstream.CommitEvent:
+				commit := event.Commit
+
+				switch commit.Operation {
+				case jetstream.CommitCreate:
+					addedDid, err := addListMember(ctx, jetstreamHosts, event, postOpEvents, dbTxs)
+					if err != nil {
+						log.Printf("error adding new list member: %v", err)
+						continue
+					}
+					didUpdates <- &jetstream.ListMemberUpdate{AddMember: addedDid}
+				case jetstream.CommitDelete:
+					tx, removedDid := deleteListMember(event)
+					dbTxs <- tx
+					didUpdates <- &jetstream.ListMemberUpdate{RemoveMember: removedDid}
+				}
+			}
 		}
 	}
 }
@@ -383,7 +433,7 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 	return &post, nil
 }
 
-func deleteRecord(event *jetstream.Event) TxFn {
+func deletePostOpRecord(event *jetstream.Event) TxFn {
 	commit := event.Commit
 	uri := utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey)
 
@@ -419,4 +469,115 @@ func writeCursor(serviceName string, cursor int64) TxFn {
 		
 		return err
 	}
+}
+
+func addListMember(
+	ctx context.Context,
+	jetstreamHosts []string,
+	event *jetstream.Event,
+	postOpEvents chan<- *jetstream.Event,
+	dbTxs chan<- TxFn,
+) (string, error) {
+	record, ok := event.Commit.Record.(jetstream.ListItemRecord)
+	if !ok {
+		return "", fmt.Errorf("was not a list item record: %w", record)
+	}
+
+	
+
+	dbTxs <- func(ctx context.Context, tx bun.Tx) error {
+		var list List
+		if err := tx.NewSelect().Model(&list).Where("uri = ?", record.List).Scan(ctx); err == sql.ErrNoRows {
+			return nil
+		} else if err != nil {
+			return err
+		}
+
+		member, err := upsertUser(ctx, record.Subject, tx)
+		if err != nil {
+			return err
+		}
+
+		listMembership := ListToUser {
+			List: &list,
+			User: member,
+			URI: event.Commit.RKey,
+		}
+		if _, err := tx.NewInsert().Model(&listMembership).Ignore().Exec(ctx); err != nil {
+			return fmt.Errorf("unable to add %s to list %s: %w", record.List, record.Subject, err)
+		}
+
+		return nil
+	}
+
+	backfillEvents := make(chan *jetstream.Event)
+	backfillCtx, cancelBackfill := context.WithCancel(ctx)
+	backfillWg := new(sync.WaitGroup)
+	backfillConfig := jetstream.JetstreamConfig {
+		Name: fmt.Sprintf("%s backill consumer", record.Subject),
+		Hosts: jetstreamHosts,
+		Cursor: 1,
+		WantedDids: []string{record.Subject},
+		WantedCollections: jetstream.POST_COLLECTIONS,
+		MaxSize: 0,
+		ExtraHeaders: http.Header{},
+		EventsChannel: backfillEvents,
+	}
+	
+	backfillConsumer := jetstream.NewJetstreamConsumer(&backfillConfig)
+
+	backfillWg.Add(1)
+	go backfillConsumer.Start(backfillCtx, backfillWg)
+
+	for {
+		select {
+		case <- ctx.Done():
+			cancelBackfill()
+			backfillWg.Wait()
+			return record.Subject, nil
+		case backfillEvent := <-backfillEvents:
+			if backfillEvent.Cursor >= event.Cursor {
+				cancelBackfill()
+				backfillWg.Wait()
+				return record.Subject, nil
+			}
+			postOpEvents <- backfillEvent
+		}
+	}
+}
+
+func deleteListMember(event *jetstream.Event) (TxFn, string) {
+	var removedDid string
+	return func(ctx context.Context, tx bun.Tx) error {
+		uri := utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey)
+		var removedListToUser *ListToUser
+		err := tx.NewSelect().Model(&removedListToUser).
+			Relation("User").
+			Relation("List").
+			Where("uri = ?", uri).
+			Scan(ctx)
+
+		if err != nil {
+			return fmt.Errorf("error deleting list member %s, %w", uri, err)
+		}
+
+		removedUser := removedListToUser.User
+		listCount, err := tx.NewSelect().Model((*ListToUser)(nil)).Where("user_id = ?", removedUser.ID).Count(ctx)
+
+		if err != nil {
+			return fmt.Errorf("error deleting list member %s, %w", uri, err)
+		}
+
+		if listCount == 1 {
+			removedDid = removedUser.DID
+		}
+
+		if _, err = tx.NewDelete().Model(&removedListToUser).
+			Where("uri = ?", uri).
+			Exec(ctx); err != nil {
+				return fmt.Errorf("error deleting list member %s, %w", uri, err)
+			}
+
+		return nil
+	}, removedDid
 }

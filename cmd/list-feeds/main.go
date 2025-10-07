@@ -17,6 +17,7 @@ import (
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
+	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 
@@ -72,10 +73,10 @@ func main() {
 		log.Fatalf("list member sync failed: %v", err)
 	}
 
-	// listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
+	listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	log.Println("Application ready")
 
@@ -87,19 +88,22 @@ func main() {
 	wg.Add(1)
 	go persist.StartDbJanitor(ctx, cfg.ServiceConfig.MaxAgeDays, dbTxs, db, wg)
 
-	jetstreamEvents := make(chan *jetstream.Event)
-	// for i := 0; i < 4; i++ {
-	// 	wg.Add(1)
-	// 	go persist.StartPostOpPersister(ctx, serviceName, jetstreamEvents, dbTxs, wg)
-	// }
+	postOpEvents := make(chan *jetstream.Event)
+	
 	wg.Add(1)
-	go persist.StartPostOpPersister(ctx, serviceName, jetstreamEvents, dbTxs, wg)
+	go persist.StartPostOpPersister(ctx, serviceName, postOpEvents, dbTxs, wg)
 
 	subState := persist.SubscriptionState{Service: serviceName}
 	cursor, err := subState.GetCursor(ctx, db)
 	if err != nil {
 		log.Fatalf("failed to load cursor from db: %v", err)
 	}
+
+	if cursor > 1 {
+		log.Printf("Resuming from Jetstream cursor %d", cursor)
+	}
+
+	didUpdates := make(chan *jetstream.ListMemberUpdate)
 
 	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
 		Name:              "Post consumer",
@@ -109,18 +113,32 @@ func main() {
 		WantedCollections: jetstream.POST_COLLECTIONS,
 		MaxSize:           0,
 		ExtraHeaders:      http.Header{},
-		EventsChannel:     jetstreamEvents,
+		EventsChannel:     postOpEvents,
+		WantedDidsUpdates: didUpdates,
 	})
 
-	// listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
-	// 	Name:              "List change consumer",
-	// 	Hosts:             cfg.JetstreamHosts,
-	// 	Cursor:            1,
-	// 	WantedDids:        listOwnerDids,
-	// 	WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
-	// 	MaxSize:           0,
-	// 	ExtraHeaders:      http.Header{},
-	// })
+	listMemberEvents := make(chan *jetstream.Event)
+	wg.Add(1)
+	go persist.StartListMemberPersister(
+		ctx,
+		cfg.JetstreamHosts,
+		listMemberEvents,
+		postOpEvents,
+		didUpdates,
+		dbTxs,
+		wg,
+	)
+
+	listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
+		Name:              "List change consumer",
+		Hosts:             cfg.JetstreamHosts,
+		Cursor:            1,
+		WantedDids:        listOwnerDids,
+		WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
+		MaxSize:           0,
+		ExtraHeaders:      http.Header{},
+		EventsChannel:     listMemberEvents,
+	})
 
 	log.Println("Running... Press Ctrl+C to exit.")
 	quit := make(chan os.Signal, 1)
@@ -128,8 +146,8 @@ func main() {
 
 	wg.Add(1)
 	go postConsumer.Start(ctx, wg)
-	// wg.Add(1)
-	// go listChangeConsumer.Start(ctx, wg)
+	wg.Add(1)
+	go listChangeConsumer.Start(ctx, wg)
 
 	<-quit
 	log.Println("Shutting down...")

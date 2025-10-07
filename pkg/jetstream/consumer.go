@@ -3,17 +3,20 @@ package jetstream
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/npmanos/list-feeds/pkg/utils"
 )
 
 const (
-	baseBackoff = 1 * time.Second
+	backoffMultiplier = 2 * time.Second
 	maxBackoff  = 60 * time.Second
 )
 
@@ -21,47 +24,54 @@ var POST_COLLECTIONS = []string{"app.bsky.feed.post", "app.bsky.feed.repost", "a
 var LIST_MEMBER_COLLECTIONS = []string{"app.bsky.graph.listitem"}
 
 type backoffManager struct {
-	delays map[string]time.Duration
-	mu     sync.Mutex
+	hostQueue *utils.PriorityQueue[string]
+	currentHost string
+	currentBackoff int
 }
 
-func newBackoffManager() *backoffManager {
+func newBackoffManager(hosts []string) *backoffManager {
+	priorityMap := make(map[string]int)
+	for i, host := range hosts {
+		priorityMap[host] = i
+	}
+
+	hostQueue := utils.NewPriorityQueue(priorityMap)
+
 	return &backoffManager{
-		delays: make(map[string]time.Duration),
+		hostQueue: hostQueue,
 	}
 }
 
-func (b *backoffManager) Wait(host string) {
-	b.mu.Lock()
-	delay, ok := b.delays[host]
-	b.mu.Unlock()
+func (b *backoffManager) Hosts() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for {
+			b.currentHost, b.currentBackoff = b.hostQueue.PopTyped()
 
-	if !ok || delay == 0 {
-		return
+			if b.currentBackoff > 0 {
+				var delay = time.Duration(b.currentBackoff) * backoffMultiplier
+				log.Printf("Backoff for %s: waiting for %v before retry", b.currentHost, delay)
+				time.Sleep(delay)
+			}
+
+			b.currentBackoff++
+
+			if !yield(b.currentHost) {
+				b.hostQueue.PushTyped(b.currentHost, b.currentBackoff)
+				return
+			}
+
+			b.hostQueue.PushTyped(b.currentHost, b.currentBackoff)
+		}
 	}
-
-	log.Printf("Backoff for %s: waiting for %v before retry", host, delay)
-	time.Sleep(delay)
 }
 
-func (b *backoffManager) Backoff(host string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	delay, ok := b.delays[host]
-	if !ok {
-		b.delays[host] = baseBackoff
-		return
-	}
-
-	newDelay := min(delay*2, maxBackoff)
-	b.delays[host] = newDelay
+func (b *backoffManager) ResetCurrentHost() {
+	b.currentBackoff = 0
 }
 
-func (b *backoffManager) Reset(host string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.delays[host] = 0
+type ListMemberUpdate struct {
+	AddMember string
+	RemoveMember string
 }
 
 type JetstreamConfig struct {
@@ -73,6 +83,7 @@ type JetstreamConfig struct {
 	MaxSize           uint32
 	ExtraHeaders      http.Header
 	EventsChannel     chan<- *Event
+	WantedDidsUpdates <-chan *ListMemberUpdate
 }
 
 type JetstreamConsumer struct {
@@ -92,9 +103,11 @@ func NewJetstreamConsumer(config *JetstreamConfig) *JetstreamConsumer {
 		config.ExtraHeaders.Add("User-Agent", "list-feeds/v0.0.1")
 	}
 
+	slices.Sort(config.WantedDids)
+
 	return &JetstreamConsumer{
 		config:  config,
-		backoff: newBackoffManager(),
+		backoff: newBackoffManager(config.Hosts),
 	}
 }
 
@@ -131,66 +144,81 @@ func (c *JetstreamConsumer) buildURL(host string) (string, error) {
 func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	for {
+	for host := range c.backoff.Hosts() {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
+		url, err := c.buildURL(host)
+		if err != nil {
+			log.Fatalf("%s: Malformed Jetstream host: %s", c.config.Name, host)
+		}
 
-		for _, host := range c.config.Hosts {
-			url, err := c.buildURL(host)
-			if err != nil {
-				log.Fatalf("%s: Malformed Jetstream host: %s", c.config.Name, host)
-			}
+		log.Printf("%s: Connecting to Jetstream instance: %s", c.config.Name, host)
 
-			c.backoff.Wait(host)
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, c.config.ExtraHeaders)
+		if err != nil {
+			log.Printf("%s: Failed to connect to %s: %v", c.config.Name, host, err)
+			continue
+		}
 
-			log.Printf("%s: Connecting to Jetstream instance: %s", c.config.Name, host)
+		c.backoff.ResetCurrentHost()
+		log.Printf("%s: Succesfully connected to %s", c.config.Name, host)
 
-			conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, c.config.ExtraHeaders)
-			if err != nil {
-				log.Printf("%s: Failed to connect to %s: %v", c.config.Name, host, err)
-				c.backoff.Backoff(host)
-				continue
-			}
-
-			c.backoff.Reset(host)
-			log.Printf("%s: Succesfully connected to %s", c.config.Name, host)
-
-			readChan := make(chan socketMessage)
-			go func() {
-				for {
-					messageType, p, err := conn.ReadMessage()
-					readChan <- socketMessage{messageType, p, err}
-					if err != nil {
-						return
-					}
-				}
-			}()
-
-		dispatchLoop:
+		readChan := make(chan socketMessage)
+		go func() {
 			for {
-				select {
-				case <-ctx.Done():
-					log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
-					conn.Close()
+				messageType, p, err := conn.ReadMessage()
+				readChan <- socketMessage{messageType, p, err}
+				if err != nil {
 					return
-				case msg := <-readChan:
-					if msg.err != nil {
-						log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
-						conn.Close()
-						c.backoff.Backoff(host)
-						break dispatchLoop
-					}
-					if msg.messageType == websocket.TextMessage {
-						event, err := UnmarshalEvent(msg.p)
-						if err != nil {
-							log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
+				}
+			}
+		}()
+
+	dispatchLoop:
+		for {
+			if c.config.WantedDidsUpdates != nil {
+				select {
+				case didUpdate := <-c.config.WantedDidsUpdates:
+					if didUpdate.AddMember != "" {
+						if _, found := slices.BinarySearch(c.config.WantedDids, didUpdate.AddMember); !found {
+							continue
 						}
-						c.config.Cursor = event.Cursor
-						c.config.EventsChannel <- event
+						c.config.WantedDids = append(c.config.WantedDids, didUpdate.AddMember)
+						slices.Sort(c.config.WantedDids)
 					}
+					if didUpdate.RemoveMember != "" {
+						if idx, found := slices.BinarySearch(c.config.WantedDids, didUpdate.RemoveMember); found {
+							copy(c.config.WantedDids[idx:], c.config.WantedDids[idx+1:])
+							c.config.WantedDids[len(c.config.WantedDids)-1] = ""
+							c.config.WantedDids = c.config.WantedDids[:len(c.config.WantedDids)-1]
+						}
+					}
+					break dispatchLoop
+				default:
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
+				conn.Close()
+				return
+			case msg := <-readChan:
+				if msg.err != nil {
+					log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
+					conn.Close()
+					break dispatchLoop
+				}
+				if msg.messageType == websocket.TextMessage {
+					event, err := UnmarshalEvent(msg.p)
+					if err != nil {
+						log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
+					}
+					c.config.Cursor = event.Cursor
+					c.config.EventsChannel <- event
 				}
 			}
 		}
