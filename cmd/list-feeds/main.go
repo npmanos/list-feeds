@@ -132,7 +132,7 @@ func main() {
 	listChangeConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
 		Name:              "List change consumer",
 		Hosts:             cfg.JetstreamHosts,
-		Cursor:            1,
+		Cursor:            cursor,
 		WantedDids:        listOwnerDids,
 		WantedCollections: jetstream.LIST_MEMBER_COLLECTIONS,
 		MaxSize:           0,
