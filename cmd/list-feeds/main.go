@@ -215,7 +215,7 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for _, listConfig := range listConfigs {
 			log.Printf("Syncing members for list %s", listConfig.URI)
-			
+
 			var list persist.List
 			err := tx.NewSelect().
 				Model(&list).
@@ -253,10 +253,10 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 
 					allApiMembers[member.Uri] = &persist.ListToUser{
 						UserID: user.ID,
-						User: &user,
+						User:   &user,
 						ListID: list.ID,
-						List: &list,
-						URI: member.Uri,
+						List:   &list,
+						URI:    member.Uri,
 					}
 				}
 
@@ -271,9 +271,9 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 		if err := tx.NewSelect().Model((*persist.ListToUser)(nil)).
 			Column("uri").
 			Scan(ctx, &dbURIs); err != nil && err != sql.ErrNoRows {
-				return err
-			}
-		
+			return err
+		}
+
 		dbURIsMap := make(map[string]struct{})
 		for _, uri := range dbURIs {
 			dbURIsMap[uri] = struct{}{}
@@ -303,7 +303,7 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 			if _, err := tx.NewDelete().Model((*persist.ListToUser)(nil)).
 				Where("uri IN (?)", membersToDelete).
 				Exec(ctx); err != nil {
-					return fmt.Errorf("removing users from lists failed: %w", err)
+				return fmt.Errorf("removing users from lists failed: %w", err)
 			}
 		}
 
@@ -330,10 +330,10 @@ func initSubState(ctx context.Context, cfg config.ServiceConfig, db *bun.DB) (st
 		serviceName = fmt.Sprintf("did:web:%s", cfg.Host)
 	}
 
-	subState := persist.SubscriptionState {
+	subState := persist.SubscriptionState{
 		Service: serviceName,
 	}
-	
+
 	if _, err := db.NewInsert().Model(&subState).Ignore().Exec(ctx); err != nil {
 		return "", fmt.Errorf("unable to set subscription state: %w", err)
 	}

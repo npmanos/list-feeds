@@ -36,7 +36,7 @@ type ListToUser struct {
 	List   *List  `bun:"rel:belongs-to,join:list_id=id"`
 	UserID int64  `bun:",pk"`
 	User   *User  `bun:"rel:belongs-to,join:user_id=id"`
-	URI   string  `bun:"uri,unique"`
+	URI    string `bun:"uri,unique"`
 }
 
 type Post struct {
@@ -104,4 +104,4 @@ func (ss *SubscriptionState) GetCursor(ctx context.Context, db *bun.DB) (int64, 
 	}
 
 	return ss.Cursor, nil
-} 
+}
