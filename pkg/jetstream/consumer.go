@@ -119,9 +119,11 @@ func (c *JetstreamConsumer) buildURL(host string) (string, error) {
 
 	params := jetstreamURL.Query()
 
-	if c.config.Cursor > 0 {
+	if c.config.Cursor > 1 {
 		var adjustedCursor = (time.Duration(c.config.Cursor) * time.Microsecond) - (5 * time.Second)
 		params.Set("cursor", fmt.Sprintf("%d", adjustedCursor.Microseconds()))
+	} else if c.config.Cursor == 1 {
+		params.Set("cursor", fmt.Sprintf("%d", c.config.Cursor))
 	}
 
 	for _, did := range c.config.WantedDids {
