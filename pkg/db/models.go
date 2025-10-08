@@ -1,10 +1,13 @@
 package db
 
 import (
+	"context"
 	"time"
 
 	"github.com/uptrace/bun"
 )
+
+type TxFn func(ctx context.Context, tx bun.Tx) error
 
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
@@ -25,15 +28,15 @@ type List struct {
 	ListMembers []User `bun:"m2m:list_members,join:List=User"`
 }
 
-// TODO: Register many-to-many model in init()
 // https://bun.uptrace.dev/guide/relations.html#many-to-many-relation
 type ListToUser struct {
 	bun.BaseModel `bun:"table:list_members,alias:lm"`
 
-	ListID int64 `bun:",pk"`
-	List   *List `bun:"rel:belongs-to,join:list_id=id"`
-	UserID int64 `bun:",pk"`
-	User   *User `bun:"rel:belongs-to,join:user_id=id"`
+	ListID int64  `bun:",pk"`
+	List   *List  `bun:"rel:belongs-to,join:list_id=id"`
+	UserID int64  `bun:",pk"`
+	User   *User  `bun:"rel:belongs-to,join:user_id=id"`
+	URI    string `bun:"uri,unique"`
 }
 
 type Post struct {
@@ -62,9 +65,10 @@ type Post struct {
 type Repost struct {
 	bun.BaseModel `bun:"table:reposts,alias:rp"`
 
-	ReposterID int64 `bun:",pk"`
+	ID         int64 `bun:",pk,autoincrement"`
+	ReposterID int64 `bun:",unique:repost"`
 	Reposter   *User `bun:"rel:belongs-to,join:reposter_id=id"`
-	PostID     int64 `bun:",pk"`
+	PostID     int64 `bun:",unique:repost"`
 	Post       *Post `bun:"rel:belongs-to,join:post_id=id"`
 
 	CreatedAt time.Time `bun:",notnull"`
@@ -75,12 +79,29 @@ type Repost struct {
 type Like struct {
 	bun.BaseModel `bun:"table:likes,alias:lp"`
 
-	LikerID int64 `bun:",pk"`
+	ID      int64 `bun:",pk,autoincrement"`
+	LikerID int64 `bun:",unique:like"`
 	Liker   *User `bun:"rel:belongs-to,join:liker_id=id"`
-	PostID  int64 `bun:",pk"`
+	PostID  int64 `bun:",unique:like"`
 	Post    *Post `bun:"rel:belongs-to,join:post_id=id"`
 
 	CreatedAt time.Time `bun:",notnull"`
 	IndexedAt time.Time `bun:",nullzero,notnull,default:current_timestamp"`
 	URI       string    `bun:",notnull,unique"`
+}
+
+type SubscriptionState struct {
+	bun.BaseModel `bun:"table:subscription_state,alias:ss"`
+
+	Service string    `bun:",notnull,unique"`
+	Cursor  int64     `bun:",notnull,default:1"`
+	Lag     time.Time `bun:",notnull,default:current_timestamp"`
+}
+
+func (ss *SubscriptionState) GetCursor(ctx context.Context, db *bun.DB) (int64, error) {
+	if err := db.NewSelect().Model(ss).Where("service = ?", ss.Service).Scan(ctx); err != nil {
+		return 1, err
+	}
+
+	return ss.Cursor, nil
 }

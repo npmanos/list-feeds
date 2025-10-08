@@ -1,12 +1,20 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/goccy/go-yaml"
 )
+
+type ServiceConfig struct {
+	Host       string  `mapstructure:"host"`
+	ServiceDID string  `mapstructure:"service_did,omitempty"`
+	MaxAgeDays float32 `mapstructure:"max_age"`
+}
 
 type DbType string
 
@@ -20,8 +28,31 @@ type SqliteConfig struct {
 	Debug bool   `mapstructure:"debug"`
 }
 
+type ListConfig struct {
+	URI string `mapstructure:"uri"`
+	did string
+}
+
+func (lc *ListConfig) DID() (string, error) {
+	if lc.did == "" {
+		did, _ := strings.CutPrefix(lc.URI, "at://")
+		did = strings.Split(did, "/")[0]
+
+		if !strings.HasPrefix(did, "did:") {
+			return "", fmt.Errorf("couldn't find a valid DID in list URI %s", lc.URI)
+		}
+
+		lc.did = did
+	}
+
+	return lc.did, nil
+}
+
 type Config struct {
-	DbConfig interface{} `mapstructure:"db"`
+	ServiceConfig  ServiceConfig `mapstructure:"service"`
+	JetstreamHosts []string      `mapstructure:"jetstream_hosts,omitempty"`
+	DbConfig       interface{}   `mapstructure:"db"`
+	ListConfigs    []ListConfig  `mapstructure:"lists"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
@@ -80,6 +111,19 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := decoder.Decode(rawConfig); err != nil {
 		return nil, err
+	}
+
+	if config.ServiceConfig.ServiceDID == "" {
+		config.ServiceConfig.ServiceDID = fmt.Sprintf("did:web:%s", config.ServiceConfig.Host)
+	}
+
+	if config.JetstreamHosts == nil {
+		config.JetstreamHosts = []string{
+			"jetstream1.us-east.bsky.network",
+			"jetstream2.us-east.bsky.network",
+			"jetstream1.us-west.bsky.network",
+			"jetstream2.us-west.bsky.network",
+		}
 	}
 
 	return &config, nil

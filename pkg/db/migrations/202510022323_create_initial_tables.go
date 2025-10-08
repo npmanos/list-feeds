@@ -23,6 +23,7 @@ func init() {
 			_, err := db.NewCreateTable().
 				Model(model).
 				IfNotExists().
+				WithForeignKeys().
 				Exec(ctx)
 
 			if err != nil {

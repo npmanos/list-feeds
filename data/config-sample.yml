@@ -1,4 +1,20 @@
+service:
+    host: atproto.example.com
+
+    # Only use this if you want a service did different from did:web
+    # service_did: "did:plc:abcde..."
+    
+    # Maximum age of db records, in days
+    max_age: 3
+
+# Custom Jetstream instances
+# jetstream_hosts:
+#     - jetstream.example.com
+
 db:
     type: sqlite
     path: ./data/feed-data.db
     debug: false
+
+lists:
+    - uri: at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.list/3lvpca43j5z26
