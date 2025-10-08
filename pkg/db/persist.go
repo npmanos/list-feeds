@@ -225,7 +225,7 @@ func persistPost(event *jetstream.Event) (TxFn, error) {
 		post := Post{
 			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 			CID:       event.Commit.CID,
-			Author:    author,
+			AuthorID:    author.ID,
 			CreatedAt: record.CreatedAt,
 		}
 
@@ -235,13 +235,18 @@ func persistPost(event *jetstream.Event) (TxFn, error) {
 				return err
 			}
 
+			if parent != nil {
+				post.ReplyParentID = parent.ID
+			}
+
 			root, err := upsertThreadPost(ctx, record.Reply.Root.URI, tx)
 			if err != nil {
 				return err
 			}
 
-			post.ReplyParent = parent
-			post.ReplyRoot = root
+			if root != nil {
+				post.ReplyRootID = root.ID
+			}
 		}
 
 		_, err = tx.NewInsert().Model(&post).Ignore().Exec(ctx)
@@ -405,7 +410,7 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 	post = Post{
 		URI:       apiPost.Uri,
 		CID:       apiPost.Cid,
-		Author:    author,
+		AuthorID:  author.ID,
 		CreatedAt: postRecord.CreatedAt,
 	}
 
@@ -415,14 +420,18 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 			return nil, err
 		}
 
-		post.ReplyParent = parentPost
+		if parentPost != nil {
+			post.ReplyParentID = parentPost.ID
+		}
 
 		rootPost, err := upsertThreadPost(ctx, postRecord.Reply.Root.URI, tx)
 		if err != nil {
 			return nil, err
 		}
 
-		post.ReplyRoot = rootPost
+		if rootPost != nil {
+			post.ReplyRootID = rootPost.ID
+		}
 	}
 
 	_, err = tx.NewInsert().Model(&post).Ignore().Exec(ctx)
@@ -574,7 +583,7 @@ func deleteListMember(event *jetstream.Event) (TxFn, string) {
 			removedDid = removedUser.DID
 		}
 
-		if _, err = tx.NewDelete().Model(&removedListToUser).
+		if _, err = tx.NewDelete().Model(removedListToUser).
 			Where("uri = ?", uri).
 			Exec(ctx); err != nil {
 			return fmt.Errorf("error deleting list member %s, %w", uri, err)
