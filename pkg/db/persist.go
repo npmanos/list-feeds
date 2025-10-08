@@ -586,7 +586,7 @@ func deleteListMember(event *jetstream.Event) (TxFn, string) {
 			removedDid = removedUser.DID
 		}
 
-		if _, err = tx.NewDelete().Model(&removedListToUser).
+		if _, err = tx.NewDelete().Model(removedListToUser).
 			Where("uri = ?", uri).
 			Exec(ctx); err != nil {
 				return fmt.Errorf("error deleting list member %s, %w", uri, err)
