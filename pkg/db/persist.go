@@ -245,7 +245,7 @@ func persistPost(event *jetstream.Event) (TxFn, error) {
 			post.ReplyRoot = root
 		}
 
-		_, err = tx.NewInsert().Model(&post).Exec(ctx)
+		_, err = tx.NewInsert().Model(&post).Ignore().Exec(ctx)
 
 		return err
 	}
@@ -281,7 +281,7 @@ func persistRepost(event *jetstream.Event) (TxFn, error) {
 			URI:        utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 		}
 
-		_, err = tx.NewInsert().Model(&repost).Exec(ctx)
+		_, err = tx.NewInsert().Model(&repost).Ignore().Exec(ctx)
 
 		return err
 	}
@@ -317,7 +317,7 @@ func persistLike(event *jetstream.Event) (TxFn, error) {
 			URI:       utils.BuildAtURI(event.DID, event.Commit.Collection, event.Commit.RKey),
 		}
 
-		_, err = tx.NewInsert().Model(&like).Exec(ctx)
+		_, err = tx.NewInsert().Model(&like).Ignore().Exec(ctx)
 
 		return err
 	}
