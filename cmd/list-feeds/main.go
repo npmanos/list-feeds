@@ -64,16 +64,16 @@ func main() {
 		log.Fatalf("unable to initialize subcription state: %v", err)
 	}
 
-	if err := syncLists(ctx, cfg.ListConfigs, db); err != nil {
+	if err := syncLists(ctx, cfg.ListFeedConfigs, db); err != nil {
 		log.Fatalf("list sync failed: %v", err)
 	}
 
-	memberDids, err := refreshLists(ctx, cfg.ListConfigs, db)
+	memberDids, err := refreshLists(ctx, cfg.ListFeedConfigs, db)
 	if err != nil {
 		log.Fatalf("list member sync failed: %v", err)
 	}
 
-	listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
+	listOwnerDids, err := utils.Map(cfg.ListFeedConfigs, func(lc config.ListFeedConfig) (string, error) { return lc.DID() })
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -89,7 +89,7 @@ func main() {
 	go persist.StartDbJanitor(ctx, cfg.ServiceConfig.MaxAgeDays, dbTxs, db, wg)
 
 	postOpEvents := make(chan *jetstream.Event)
-	
+
 	wg.Add(1)
 	go persist.StartPostOpPersister(ctx, serviceName, postOpEvents, dbTxs, wg)
 
@@ -156,7 +156,7 @@ func main() {
 	wg.Wait()
 }
 
-func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) error {
+func syncLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *bun.DB) error {
 	log.Println("Syncing lists with config file...")
 
 	// 1. Get all list URIs from the config file into a map for easy lookup.
@@ -226,7 +226,7 @@ func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB)
 	})
 }
 
-func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) ([]string, error) {
+func refreshLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *bun.DB) ([]string, error) {
 	apiClient := atpclient.GetATProtoClient()
 	allApiMembers := make(map[string]*persist.ListToUser)
 
@@ -342,7 +342,7 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 	return result, err
 }
 
-func initSubState(ctx context.Context, cfg config.ServiceConfig, db *bun.DB) (string, error) {
+func initSubState(ctx context.Context, cfg *config.ServiceConfig, db *bun.DB) (string, error) {
 	var serviceName string
 	if serviceName = cfg.ServiceDID; cfg.ServiceDID == "" {
 		serviceName = fmt.Sprintf("did:web:%s", cfg.Host)

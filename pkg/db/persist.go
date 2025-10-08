@@ -48,7 +48,7 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 			return
 		case event := <-events:
 			select {
-			case <- cursorUpdate.C:
+			case <-cursorUpdate.C:
 				if event.Cursor > lastCursor {
 					if fn := writeCursor(serviceName, event.Cursor); fn != nil {
 						dbTxs <- fn
@@ -57,7 +57,6 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 					}
 				}
 
-				
 			default:
 			}
 
@@ -471,7 +470,7 @@ func writeCursor(serviceName string, cursor int64) TxFn {
 			Set("cursor = ?", cursor).
 			Where("service = ?", serviceName).
 			Exec(ctx)
-		
+
 		return err
 	}
 }
@@ -488,8 +487,6 @@ func addListMember(
 		return "", fmt.Errorf("was not a list item record: %v", record)
 	}
 
-	
-
 	dbTxs <- func(ctx context.Context, tx bun.Tx) error {
 		var list List
 		if err := tx.NewSelect().Model(&list).Where("uri = ?", record.List).Scan(ctx); err == sql.ErrNoRows {
@@ -503,10 +500,10 @@ func addListMember(
 			return err
 		}
 
-		listMembership := ListToUser {
+		listMembership := ListToUser{
 			List: &list,
 			User: member,
-			URI: event.Commit.RKey,
+			URI:  event.Commit.RKey,
 		}
 		if _, err := tx.NewInsert().Model(&listMembership).Ignore().Exec(ctx); err != nil {
 			return fmt.Errorf("unable to add %s to list %s: %w", record.List, record.Subject, err)
@@ -518,17 +515,17 @@ func addListMember(
 	backfillEvents := make(chan *jetstream.Event)
 	backfillCtx, cancelBackfill := context.WithCancel(ctx)
 	backfillWg := new(sync.WaitGroup)
-	backfillConfig := jetstream.JetstreamConfig {
-		Name: fmt.Sprintf("%s backill consumer", record.Subject),
-		Hosts: jetstreamHosts,
-		Cursor: 1,
-		WantedDids: []string{record.Subject},
+	backfillConfig := jetstream.JetstreamConfig{
+		Name:              fmt.Sprintf("%s backill consumer", record.Subject),
+		Hosts:             jetstreamHosts,
+		Cursor:            1,
+		WantedDids:        []string{record.Subject},
 		WantedCollections: jetstream.POST_COLLECTIONS,
-		MaxSize: 0,
-		ExtraHeaders: http.Header{},
-		EventsChannel: backfillEvents,
+		MaxSize:           0,
+		ExtraHeaders:      http.Header{},
+		EventsChannel:     backfillEvents,
 	}
-	
+
 	backfillConsumer := jetstream.NewJetstreamConsumer(&backfillConfig)
 
 	backfillWg.Add(1)
@@ -536,7 +533,7 @@ func addListMember(
 
 	for {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			cancelBackfill()
 			backfillWg.Wait()
 			return record.Subject, nil
@@ -580,8 +577,8 @@ func deleteListMember(event *jetstream.Event) (TxFn, string) {
 		if _, err = tx.NewDelete().Model(&removedListToUser).
 			Where("uri = ?", uri).
 			Exec(ctx); err != nil {
-				return fmt.Errorf("error deleting list member %s, %w", uri, err)
-			}
+			return fmt.Errorf("error deleting list member %s, %w", uri, err)
+		}
 
 		return nil
 	}, removedDid

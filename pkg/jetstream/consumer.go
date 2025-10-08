@@ -17,15 +17,15 @@ import (
 
 const (
 	backoffMultiplier = 2 * time.Second
-	maxBackoff  = 60 * time.Second
+	maxBackoff        = 60 * time.Second
 )
 
 var POST_COLLECTIONS = []string{"app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.feed.like"}
 var LIST_MEMBER_COLLECTIONS = []string{"app.bsky.graph.listitem"}
 
 type backoffManager struct {
-	hostQueue *utils.PriorityQueue[string]
-	currentHost string
+	hostQueue      *utils.PriorityQueue[string]
+	currentHost    string
 	currentBackoff int
 }
 
@@ -70,7 +70,7 @@ func (b *backoffManager) ResetCurrentHost() {
 }
 
 type ListMemberUpdate struct {
-	AddMember string
+	AddMember    string
 	RemoveMember string
 }
 
