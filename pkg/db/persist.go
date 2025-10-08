@@ -485,7 +485,7 @@ func addListMember(
 ) (string, error) {
 	record, ok := event.Commit.Record.(jetstream.ListItemRecord)
 	if !ok {
-		return "", fmt.Errorf("was not a list item record: %w", record)
+		return "", fmt.Errorf("was not a list item record: %v", record)
 	}
 
 	
