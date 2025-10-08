@@ -268,6 +268,8 @@ func persistRepost(event *jetstream.Event) (TxFn, error) {
 		post, err := upsertThreadPost(ctx, record.Subject.URI, tx)
 		if err != nil {
 			return err
+		} else if post == nil {
+			return nil
 		}
 
 		repost := Repost{
@@ -302,6 +304,8 @@ func persistLike(event *jetstream.Event) (TxFn, error) {
 		post, err := upsertThreadPost(ctx, record.Subject.URI, tx)
 		if err != nil {
 			return err
+		} else if post == nil {
+			return nil
 		}
 
 		like := Like{
@@ -360,7 +364,8 @@ func upsertThreadPost(ctx context.Context, atURI string, tx bun.Tx) (*Post, erro
 	}
 
 	if len(apiPosts.Posts) == 0 {
-		return nil, fmt.Errorf("unable to fetch post from API: %s", atURI)
+		// return nil, fmt.Errorf("unable to fetch post from API: %s", atURI)
+		return nil, nil
 	}
 
 	apiPost := apiPosts.Posts[0]
