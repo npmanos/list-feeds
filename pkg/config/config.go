@@ -81,7 +81,7 @@ type Config struct {
 	ServiceConfig   *ServiceConfig   `mapstructure:"service"`
 	JetstreamHosts  []string         `mapstructure:"jetstream_hosts,omitempty"`
 	DbConfig        any              `mapstructure:"db"`
-	ListFeedConfigs []ListFeedConfig `mapstructure:"lists"`
+	ListFeedConfigs []ListFeedConfig `mapstructure:"feeds"`
 }
 
 func dbConfigDecodeHook() mapstructure.DecodeHookFunc {
