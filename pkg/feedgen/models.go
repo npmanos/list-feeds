@@ -11,52 +11,34 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type CursorType string
-
-const (
-	PostCursor CursorType = "p"
-	RepostCursor CursorType = "r"
-	UnknownCursor CursorType = "u"
-)
-
 type FeedCursor struct {
-	IndexedAt time.Time
-	Type CursorType
-	ID int64
+	CreatedAt time.Time
+	ID string
 }
 
 func ParseCursor(cursorStr string) (*FeedCursor, error) {
+	if cursorStr == "" {
+		return nil, nil
+	}
+
 	parts := strings.Split(cursorStr, "::")
 
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid cursor format: %s", cursorStr)
 	}
 
-	idxInt, err := strconv.Atoi(parts[0])
+	createdInt, err := strconv.Atoi(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse IndexedAt in cursor: %w", err)
+		return nil, fmt.Errorf("unable to parse CreatedAt in cursor: %w", err)
 	}
-	indexedAt := time.UnixMicro(int64(idxInt))
+	createdAt := time.UnixMilli(int64(createdInt))
 
-	cursorType := CursorType(parts[1])
-	switch cursorType {
-	case PostCursor, RepostCursor:
-		break
-	default:
-		cursorType = UnknownCursor
-	}
-
-	id, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse ID in cursor: %w", err)
-	}
-
-	return &FeedCursor{indexedAt, cursorType, int64(id)}, nil
+	return &FeedCursor{createdAt, parts[1]}, nil
 }
 
 func (fc *FeedCursor) MarshalJSON() ([]byte, error) {
-	idxInt := fc.IndexedAt.UnixMicro()
-	cursorStr := fmt.Sprintf("%d::%s::%d", idxInt, fc.Type, fc.ID)
+	idxInt := fc.CreatedAt.UnixMilli()
+	cursorStr := fmt.Sprintf("%d::%s", idxInt, fc.ID)
 
 	return json.Marshal(cursorStr)
 }
@@ -67,13 +49,12 @@ func (fc *FeedCursor) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	parsed, err := ParseCursor(string(b))
+	parsed, err := ParseCursor(cursorStr)
 	if err != nil {
 		return err
 	}
 
-	fc.IndexedAt = parsed.IndexedAt
-	fc.Type = parsed.Type
+	fc.CreatedAt = parsed.CreatedAt
 	fc.ID = parsed.ID
 
 	return nil
@@ -92,7 +73,7 @@ type PostReason struct {
 }
 
 type FeedPost struct {
-	Post string `json:"post"`
+	PostURI string `json:"post"`
 	Reason *PostReason `json:"reason,omitzero"`
 }
 
@@ -102,5 +83,5 @@ type FeedSkeleton struct {
 }
 
 type FeedBuilder interface {
-	BuildFeed(ctx context.Context, cursor string, limit int, db *bun.DB) *FeedSkeleton
+	BuildFeed(ctx context.Context, cursor string, limit int, db *bun.DB) (*FeedSkeleton, error)
 }
