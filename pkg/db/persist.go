@@ -53,7 +53,6 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 					if fn := writeCursor(serviceName, event.Cursor); fn != nil {
 						dbTxs <- fn
 						lastCursor = event.Cursor
-						log.Printf("Cursor: %d", lastCursor)
 					}
 				}
 

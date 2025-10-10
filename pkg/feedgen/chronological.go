@@ -2,7 +2,6 @@ package feedgen
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -100,9 +99,5 @@ func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit 
 	lastPost := posts[len(posts)-1]
 	newCursor := FeedCursor{CreatedAt: lastPost.CreatedAt, ID: lastPost.CID}
 
-	skeleton := FeedSkeleton{Cursor: &newCursor, Feed: feedItems}
-	json, err := json.Marshal(skeleton)
-	log.Printf("%v, %v", string(json), err)
-
-	return &skeleton, nil
+	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }
