@@ -5,19 +5,21 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"slices"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/npmanos/list-feeds/pkg/atpclient"
 	"github.com/npmanos/list-feeds/pkg/config"
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
-	"github.com/npmanos/list-feeds/pkg/feedgen"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
+	"github.com/npmanos/list-feeds/pkg/server"
 	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
@@ -73,15 +75,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("list member sync failed: %v", err)
 	}
-
-	fb := feedgen.NewChronologicalFeed(cfg.ListFeedConfigs[0].ListURI, cfg.ListFeedConfigs[0].ChronologicalConfig, db)
-	_, err = fb.BuildFeed(ctx, "1759959282283::bafyreigq7wtd642bmx6y4dpyf7kz2mirrybt4c4wd2cd5dvtlq4cietqoq", 5)
-	if err != nil {
-		cancel()
-		log.Fatalf("%v", err)
-	}
-	cancel()
-	return
 
 	listOwnerDids, err := utils.Map(cfg.ListFeedConfigs, func(lc config.ListFeedConfig) (string, error) { return lc.ListDID() })
 	if err != nil {
@@ -158,6 +151,32 @@ func main() {
 	go postConsumer.Start(ctx, wg)
 	wg.Add(1)
 	go listChangeConsumer.Start(ctx, wg)
+
+	srv := server.NewServer(cfg, db)
+	httpServer := & http.Server{
+		Addr: net.JoinHostPort("0.0.0.0", "7474"),
+		Handler: srv,
+	}
+
+	go func ()  {
+		log.Printf("Listening on %s", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("error listening and serving: %v", err)
+			cancel()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<- ctx.Done()
+		shutdownCtx := context.Background()
+		shutdownCtx, serverShutdownCancel := context.WithTimeout(shutdownCtx, 10 * time.Second)
+		defer serverShutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			fmt.Printf("error shutting down http server: %v", err)
+		}
+	}()
 
 	<-quit
 	log.Println("Shutting down...")
