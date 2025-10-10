@@ -83,7 +83,12 @@ type FeedSkeleton struct {
 }
 
 type FeedBuilder interface {
-	BuildFeed(ctx context.Context, cursor string, limit int, db *bun.DB) (*FeedSkeleton, error)
+	BuildFeed(ctx context.Context, cursor string, limit int) (*FeedSkeleton, error)
+}
+
+type baseFeed struct {
+	ListURI string
+	db *bun.DB
 }
 
 type FeedURI struct {

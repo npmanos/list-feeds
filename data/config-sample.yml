@@ -18,6 +18,7 @@ db:
 
 feeds:
   - list_uri: at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.list/3lvpca43j5z26
+    feed_did: did:plc:ffhsvgvnjwkbbhoi62pezi4x
     chronological:
       enabled: true
       name: Community Showcase

@@ -56,19 +56,20 @@ type PopularFeedConfig struct {
 }
 
 type ListFeedConfig struct {
-	URI                 string `mapstructure:"list_uri"`
+	ListURI                 string `mapstructure:"list_uri"`
+	FeedDID				string `mapstructure:"feed_did"`
 	did                 string
 	ChronologicalConfig *ChronologicalFeedConfig `mapstructure:"chronological"`
 	PopularConfig       *PopularFeedConfig       `mapstructure:"popular"`
 }
 
-func (lc *ListFeedConfig) DID() (string, error) {
+func (lc *ListFeedConfig) ListDID() (string, error) {
 	if lc.did == "" {
-		did, _ := strings.CutPrefix(lc.URI, "at://")
+		did, _ := strings.CutPrefix(lc.ListURI, "at://")
 		did = strings.Split(did, "/")[0]
 
 		if !strings.HasPrefix(did, "did:") {
-			return "", fmt.Errorf("couldn't find a valid DID in list URI %s", lc.URI)
+			return "", fmt.Errorf("couldn't find a valid DID in list URI %s", lc.ListURI)
 		}
 
 		lc.did = did
