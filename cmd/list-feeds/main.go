@@ -16,6 +16,7 @@ import (
 	"github.com/npmanos/list-feeds/pkg/config"
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
+	"github.com/npmanos/list-feeds/pkg/feedgen"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
 	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
@@ -73,7 +74,16 @@ func main() {
 		log.Fatalf("list member sync failed: %v", err)
 	}
 
-	listOwnerDids, err := utils.Map(cfg.ListFeedConfigs, func(lc config.ListFeedConfig) (string, error) { return lc.DID() })
+	fb := feedgen.NewChronologicalFeed(cfg.ListFeedConfigs[0].ListURI, cfg.ListFeedConfigs[0].ChronologicalConfig, db)
+	_, err = fb.BuildFeed(ctx, "1759959282283::bafyreigq7wtd642bmx6y4dpyf7kz2mirrybt4c4wd2cd5dvtlq4cietqoq", 5)
+	if err != nil {
+		cancel()
+		log.Fatalf("%v", err)
+	}
+	cancel()
+	return
+
+	listOwnerDids, err := utils.Map(cfg.ListFeedConfigs, func(lc config.ListFeedConfig) (string, error) { return lc.ListDID() })
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -162,7 +172,7 @@ func syncLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *bun
 	// 1. Get all list URIs from the config file into a map for easy lookup.
 	configListURIs := make(map[string]struct{})
 	for _, lc := range listConfigs {
-		configListURIs[lc.URI] = struct{}{}
+		configListURIs[lc.ListURI] = struct{}{}
 	}
 
 	// 2. Get all list URIs and IDs currently in the database.
@@ -232,26 +242,26 @@ func refreshLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *
 
 	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for _, listConfig := range listConfigs {
-			log.Printf("Syncing members for list %s", listConfig.URI)
+			log.Printf("Syncing members for list %s", listConfig.ListURI)
 
 			var list persist.List
 			err := tx.NewSelect().
 				Model(&list).
-				Where("uri = ?", listConfig.URI).
+				Where("uri = ?", listConfig.ListURI).
 				Scan(ctx)
 
 			if err != nil && err != sql.ErrNoRows {
 				return err
 			}
 
-			list.URI = listConfig.URI
+			list.URI = listConfig.ListURI
 
 			var cursor string
 			for {
-				listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.URI)
+				listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.ListURI)
 
 				if err != nil {
-					return fmt.Errorf("failed to get list members from API for %s: %w", listConfig.URI, err)
+					return fmt.Errorf("failed to get list members from API for %s: %w", listConfig.ListURI, err)
 				}
 
 				for _, member := range listMembers.Items {

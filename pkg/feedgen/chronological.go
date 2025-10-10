@@ -14,8 +14,18 @@ import (
 )
 
 type ChronologicalFeed struct {
-	ListURI string
+	baseFeed
 	FeedConfig *config.ChronologicalFeedConfig
+}
+
+func NewChronologicalFeed(listURI string, feedConfig *config.ChronologicalFeedConfig, db *bun.DB) *ChronologicalFeed {
+	return &ChronologicalFeed{
+		baseFeed: baseFeed{
+			ListURI: listURI,
+			db:      db,
+		},
+		FeedConfig: feedConfig,
+	}
 }
 
 type feedSelect struct {
@@ -25,7 +35,9 @@ type feedSelect struct {
 	RepostURI string `bun:"repost_uri,nullzero"`
 }
 
-func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit int, db *bun.DB) (*FeedSkeleton, error) {
+func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit int) (*FeedSkeleton, error) {
+	db := f.db
+
 	parsedCursor, err := ParseCursor(cursor)
 	if err != nil {
 		log.Printf("unable to parse cursor %s, discarding: %v", cursor, err)
