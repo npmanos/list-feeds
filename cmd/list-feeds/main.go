@@ -5,18 +5,21 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"slices"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/npmanos/list-feeds/pkg/atpclient"
 	"github.com/npmanos/list-feeds/pkg/config"
 	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/db/migrations"
 	"github.com/npmanos/list-feeds/pkg/jetstream"
+	"github.com/npmanos/list-feeds/pkg/server"
 	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
@@ -64,16 +67,16 @@ func main() {
 		log.Fatalf("unable to initialize subcription state: %v", err)
 	}
 
-	if err := syncLists(ctx, cfg.ListConfigs, db); err != nil {
+	if err := syncLists(ctx, cfg.ListFeedConfigs, db); err != nil {
 		log.Fatalf("list sync failed: %v", err)
 	}
 
-	memberDids, err := refreshLists(ctx, cfg.ListConfigs, db)
+	memberDids, err := refreshLists(ctx, cfg.ListFeedConfigs, db)
 	if err != nil {
 		log.Fatalf("list member sync failed: %v", err)
 	}
 
-	listOwnerDids, err := utils.Map(cfg.ListConfigs, func(lc config.ListConfig) (string, error) { return lc.DID() })
+	listOwnerDids, err := utils.Map(cfg.ListFeedConfigs, func(lc config.ListFeedConfig) (string, error) { return lc.ListDID() })
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -89,7 +92,7 @@ func main() {
 	go persist.StartDbJanitor(ctx, cfg.ServiceConfig.MaxAgeDays, dbTxs, db, wg)
 
 	postOpEvents := make(chan *jetstream.Event)
-	
+
 	wg.Add(1)
 	go persist.StartPostOpPersister(ctx, serviceName, postOpEvents, dbTxs, wg)
 
@@ -149,6 +152,32 @@ func main() {
 	wg.Add(1)
 	go listChangeConsumer.Start(ctx, wg)
 
+	srv := server.NewServer(cfg, db)
+	httpServer := & http.Server{
+		Addr: net.JoinHostPort("0.0.0.0", "7474"),
+		Handler: srv,
+	}
+
+	go func ()  {
+		log.Printf("Listening on %s", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("error listening and serving: %v", err)
+			cancel()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<- ctx.Done()
+		shutdownCtx := context.Background()
+		shutdownCtx, serverShutdownCancel := context.WithTimeout(shutdownCtx, 10 * time.Second)
+		defer serverShutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			fmt.Printf("error shutting down http server: %v", err)
+		}
+	}()
+
 	<-quit
 	log.Println("Shutting down...")
 	cancel()
@@ -156,13 +185,13 @@ func main() {
 	wg.Wait()
 }
 
-func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) error {
+func syncLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *bun.DB) error {
 	log.Println("Syncing lists with config file...")
 
 	// 1. Get all list URIs from the config file into a map for easy lookup.
 	configListURIs := make(map[string]struct{})
 	for _, lc := range listConfigs {
-		configListURIs[lc.URI] = struct{}{}
+		configListURIs[lc.ListURI] = struct{}{}
 	}
 
 	// 2. Get all list URIs and IDs currently in the database.
@@ -226,32 +255,32 @@ func syncLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB)
 	})
 }
 
-func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.DB) ([]string, error) {
+func refreshLists(ctx context.Context, listConfigs []config.ListFeedConfig, db *bun.DB) ([]string, error) {
 	apiClient := atpclient.GetATProtoClient()
 	allApiMembers := make(map[string]*persist.ListToUser)
 
 	err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for _, listConfig := range listConfigs {
-			log.Printf("Syncing members for list %s", listConfig.URI)
+			log.Printf("Syncing members for list %s", listConfig.ListURI)
 
 			var list persist.List
 			err := tx.NewSelect().
 				Model(&list).
-				Where("uri = ?", listConfig.URI).
+				Where("uri = ?", listConfig.ListURI).
 				Scan(ctx)
 
 			if err != nil && err != sql.ErrNoRows {
 				return err
 			}
 
-			list.URI = listConfig.URI
+			list.URI = listConfig.ListURI
 
 			var cursor string
 			for {
-				listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.URI)
+				listMembers, err := appbsky.GraphGetList(ctx, apiClient, cursor, 100, listConfig.ListURI)
 
 				if err != nil {
-					return fmt.Errorf("failed to get list members from API for %s: %w", listConfig.URI, err)
+					return fmt.Errorf("failed to get list members from API for %s: %w", listConfig.ListURI, err)
 				}
 
 				for _, member := range listMembers.Items {
@@ -342,7 +371,7 @@ func refreshLists(ctx context.Context, listConfigs []config.ListConfig, db *bun.
 	return result, err
 }
 
-func initSubState(ctx context.Context, cfg config.ServiceConfig, db *bun.DB) (string, error) {
+func initSubState(ctx context.Context, cfg *config.ServiceConfig, db *bun.DB) (string, error) {
 	var serviceName string
 	if serviceName = cfg.ServiceDID; cfg.ServiceDID == "" {
 		serviceName = fmt.Sprintf("did:web:%s", cfg.Host)

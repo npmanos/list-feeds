@@ -6,11 +6,10 @@ import (
 	"log"
 )
 
-
 type queueItem[E comparable] struct {
-	value E
+	value    E
 	priority int
-	index int
+	index    int
 }
 
 type PriorityQueue[E comparable] []*queueItem[E]
@@ -20,16 +19,16 @@ func NewPriorityQueue[E comparable](itemsPriority map[E]int) *PriorityQueue[E] {
 	var i = 0
 	for value, priority := range itemsPriority {
 		pq[i] = &queueItem[E]{
-			value: value,
+			value:    value,
 			priority: priority,
-			index: i,
+			index:    i,
 		}
 		i++
 	}
 
-	 heap.Init(&pq)
+	heap.Init(&pq)
 
-	 return &pq
+	return &pq
 }
 
 func (pq PriorityQueue[E]) Len() int { return len(pq) }
@@ -73,4 +72,3 @@ func (pq *PriorityQueue[E]) PopTyped() (E, int) {
 	item := heap.Pop(pq).(*queueItem[E])
 	return item.value, item.priority
 }
-

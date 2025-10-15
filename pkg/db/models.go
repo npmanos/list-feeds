@@ -52,10 +52,10 @@ type Post struct {
 	CreatedAt time.Time `bun:",notnull"`
 	IndexedAt time.Time `bun:",nullzero,notnull,default:current_timestamp"`
 
-	ReplyParentID int64
+	ReplyParentID int64 `bun:",nullzero"`
 	ReplyParent   *Post `bun:"rel:belongs-to,join:reply_parent_id=id"`
 
-	ReplyRootID int64
+	ReplyRootID int64 `bun:",nullzero"`
 	ReplyRoot   *Post `bun:"rel:belongs-to,join:reply_root_id=id"`
 
 	Reposts []*Repost `bun:"rel:has-many,join:id=post_id"`
@@ -80,9 +80,9 @@ type Like struct {
 	bun.BaseModel `bun:"table:likes,alias:lp"`
 
 	ID      int64 `bun:",pk,autoincrement"`
-	LikerID int64 `bun:",unique:like"`
+	LikerID int64 `bun:",unique:like,nullzero"`
 	Liker   *User `bun:"rel:belongs-to,join:liker_id=id"`
-	PostID  int64 `bun:",unique:like"`
+	PostID  int64 `bun:",unique:like,nullzero"`
 	Post    *Post `bun:"rel:belongs-to,join:post_id=id"`
 
 	CreatedAt time.Time `bun:",notnull"`
