@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/npmanos/list-feeds/pkg/config"
+	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/feedgen"
 	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
@@ -102,13 +103,21 @@ func handleGetFeedSkeleton(cfg config.Config, db *bun.DB) http.Handler {
 	})
 }
 
-func handleHealth(serviceName string) http.Handler {
+func handleHealth(serviceName string, maxLag time.Duration, db *bun.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := struct {
 			Status string `json:"status"`
-			Lag int64 `json:"lag"`
-		} {
-			Status: "ok",
+			Lag float64 `json:"lag,omitzero"`
+		}{}
+
+		lag, err := persist.GetLag(r.Context(), serviceName, db)
+		if err != nil {
+			status.Status = "unhealthy"
+		} else if lag > maxLag {
+			status.Status = "behind"
+			status.Lag = lag.Seconds()
+		} else {
+			status.Status = "ok"
 		}
 
 		utils.HttpEncode(w, r, http.StatusOK, status)
