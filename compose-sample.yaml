@@ -3,6 +3,7 @@ services:
     image: ghcr.io/npmanos/list-feeds:latest
     container_name: bsky-list-feeds
     restart: unless-stopped
+    # user: 1000:1000
     ports:
       - "7474:7474"
     volumes:
