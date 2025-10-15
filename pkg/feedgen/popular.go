@@ -18,10 +18,12 @@ type PopularFeed struct {
 	FeedConfig *config.PopularFeedConfig
 }
 
-func NewPopularFeed(listURI string, feedConfig *config.PopularFeedConfig, db *bun.DB) *PopularFeed {
+func NewPopularFeed(listURI string, serviceName string, maxLag time.Duration, feedConfig *config.PopularFeedConfig, db *bun.DB) *PopularFeed {
 	return &PopularFeed {
 		baseFeed: baseFeed{
 			ListURI: listURI,
+			ServiceName: serviceName,
+			MaxLag: maxLag,
 			db: db,
 		},
 		FeedConfig: feedConfig,
@@ -122,8 +124,24 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		return FeedPost{PostURI: fs.URI}, nil
 	})
 
-	last_post := posts[len(posts) - 1]
-	newCursor := FeedCursor{CreatedAt: last_post.CreatedAt, ID: strconv.FormatFloat(last_post.Score, 'f', -1, 64)}
+	if f.FeedConfig.LagNoticePost != "" {
+		if lag, err := persist.GetLag(ctx, f.ServiceName, f.db); err != nil || lag > f.MaxLag {
+			lagPost := FeedPost{
+				PostURI: f.FeedConfig.LagNoticePost,
+				Reason: &PostReason{
+					Type: ReasonPin,
+				},
+			}
+			feedItems = utils.Prepend(feedItems, lagPost)
+		}
+	}
+
+	var newCursor FeedCursor
+	if len(posts) > 0 {
+		last_post := posts[len(posts) - 1]
+		newCursor.CreatedAt = last_post.CreatedAt
+		newCursor.ID = strconv.FormatFloat(last_post.Score, 'f', -1, 64)
+	}
 
 	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }

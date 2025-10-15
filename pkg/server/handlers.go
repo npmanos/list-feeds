@@ -6,8 +6,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/npmanos/list-feeds/pkg/config"
+	persist "github.com/npmanos/list-feeds/pkg/db"
 	"github.com/npmanos/list-feeds/pkg/feedgen"
 	"github.com/npmanos/list-feeds/pkg/utils"
 	"github.com/uptrace/bun"
@@ -44,16 +46,18 @@ func handleDescribeFeedGen(cfg config.Config) http.Handler {
 	})
 }
 
-func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler {
+func handleGetFeedSkeleton(cfg config.Config, db *bun.DB) http.Handler {
 	var init sync.Once
 	feedMap := make(map[string]feedgen.FeedBuilder, 0)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		init.Do(func() {
-			for _, feedCfg := range cfg {
+			for _, feedCfg := range cfg.ListFeedConfigs {
 				if feedCfg.ChronologicalConfig.Enabled {
 					uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.ChronologicalConfig.Slug)
 					feedMap[uri] = feedgen.NewChronologicalFeed(
 						feedCfg.ListURI,
+						cfg.ServiceConfig.ServiceDID,
+						time.Duration(cfg.ServiceConfig.MaxLagSecs) * time.Second,
 						feedCfg.ChronologicalConfig,
 						db,
 					)
@@ -63,6 +67,8 @@ func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler
 					uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.PopularConfig.Slug)
 					feedMap[uri] = feedgen.NewPopularFeed(
 						feedCfg.ListURI,
+						cfg.ServiceConfig.ServiceDID,
+						time.Duration(cfg.ServiceConfig.MaxLagSecs) * time.Second,
 						feedCfg.PopularConfig,
 						db,
 					)
@@ -97,13 +103,21 @@ func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler
 	})
 }
 
-func handleHealth(db *bun.DB) http.Handler {
+func handleHealth(serviceName string, maxLag time.Duration, db *bun.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := struct {
-			status string `json:"status"`
-			lag int64 `json:"lag"`
-		} {
-			status: "ok",
+			Status string `json:"status"`
+			Lag float64 `json:"lag,omitzero"`
+		}{}
+
+		lag, err := persist.GetLag(r.Context(), serviceName, db)
+		if err != nil {
+			status.Status = "unhealthy"
+		} else if lag > maxLag {
+			status.Status = "behind"
+			status.Lag = lag.Seconds()
+		} else {
+			status.Status = "ok"
 		}
 
 		utils.HttpEncode(w, r, http.StatusOK, status)

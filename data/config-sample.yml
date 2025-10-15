@@ -7,6 +7,9 @@ service:
   # Maximum age of db records, in days
   max_age: 3
 
+  # Maximum lag before lag message is pinned to feed, in seconds
+  max_lag: 30
+
 # Custom Jetstream instances
 # jetstream_hosts:
 #   - jetstream.example.com

@@ -17,10 +17,12 @@ type ChronologicalFeed struct {
 	FeedConfig *config.ChronologicalFeedConfig
 }
 
-func NewChronologicalFeed(listURI string, feedConfig *config.ChronologicalFeedConfig, db *bun.DB) *ChronologicalFeed {
+func NewChronologicalFeed(listURI string, serviceName string, maxLag time.Duration, feedConfig *config.ChronologicalFeedConfig, db *bun.DB) *ChronologicalFeed {
 	return &ChronologicalFeed{
 		baseFeed: baseFeed{
 			ListURI: listURI,
+			ServiceName: serviceName,
+			MaxLag: maxLag,
 			db:      db,
 		},
 		FeedConfig: feedConfig,
@@ -96,8 +98,24 @@ func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit 
 		return fp, nil
 	})
 
-	lastPost := posts[len(posts)-1]
-	newCursor := FeedCursor{CreatedAt: lastPost.CreatedAt, ID: lastPost.CID}
+	if f.FeedConfig.LagNoticePost != "" {
+		if lag, err := persist.GetLag(ctx, f.ServiceName, f.db); err != nil || lag > f.MaxLag {
+			lagPost := FeedPost{
+				PostURI: f.FeedConfig.LagNoticePost,
+				Reason: &PostReason{
+					Type: ReasonPin,
+				},
+			}
+			feedItems = utils.Prepend(feedItems, lagPost)
+		}
+	}
+
+	var newCursor FeedCursor
+	if len(posts) > 0 {
+		lastPost := posts[len(posts)-1]
+		newCursor.CreatedAt = lastPost.CreatedAt
+		newCursor.ID = lastPost.CID
+	}
 
 	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }

@@ -95,13 +95,25 @@ type SubscriptionState struct {
 
 	Service string    `bun:",notnull,unique"`
 	Cursor  int64     `bun:",notnull,default:1"`
-	Lag     time.Time `bun:",notnull,default:current_timestamp"`
+	Lag     time.Duration `bun:",notnull,default:0"`
 }
 
-func (ss *SubscriptionState) GetCursor(ctx context.Context, db *bun.DB) (int64, error) {
+func (ss *SubscriptionState) GetCursor(ctx context.Context, db bun.IDB) (int64, error) {
 	if err := db.NewSelect().Model(ss).Where("service = ?", ss.Service).Scan(ctx); err != nil {
 		return 1, err
 	}
 
 	return ss.Cursor, nil
+}
+
+func GetLag(ctx context.Context, serviceName string, db bun.IDB) (time.Duration, error) {
+	var lag time.Duration
+	if err := db.NewSelect().Model((*SubscriptionState)(nil)).
+		Column("lag").
+		Where("service = ?", serviceName).
+		Scan(ctx, &lag); err != nil {
+			return 0, err
+		}
+	
+	return lag, nil
 }
