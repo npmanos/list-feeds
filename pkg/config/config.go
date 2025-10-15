@@ -157,5 +157,11 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	for _, feedConfig := range config.ListFeedConfigs {
+		if feedConfig.PopularConfig.Weights.MemberMultiplier == 0 {
+			feedConfig.PopularConfig.Weights.MemberMultiplier = 1
+		}
+	}
+
 	return &config, nil
 }

@@ -20,5 +20,6 @@ func addRoutes(
 		time.Duration(cfg.ServiceConfig.MaxLagSecs) * time.Second,
 		db,
 	))
+	mux.Handle("/.well-known/did.json", handleWellKnownDid(cfg.ServiceConfig.ServiceDID, cfg.ServiceConfig.Host))
 	mux.Handle("/", handleDefault())
 }

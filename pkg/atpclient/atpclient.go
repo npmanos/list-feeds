@@ -1,12 +1,12 @@
 package atpclient
 
-import "github.com/bluesky-social/indigo/atproto/client"
+import "github.com/bluesky-social/indigo/atproto/atclient"
 
-var atpClient *client.APIClient
+var atpClient *atclient.APIClient
 
-func GetATProtoClient() *client.APIClient {
+func GetATProtoClient() *atclient.APIClient {
 	if atpClient == nil {
-		atpClient = client.NewAPIClient("https://public.api.bsky.app")
+		atpClient = atclient.NewAPIClient("https://public.api.bsky.app")
 	}
 
 	return atpClient

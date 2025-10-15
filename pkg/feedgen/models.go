@@ -2,11 +2,12 @@ package feedgen
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/uptrace/bun"
 )

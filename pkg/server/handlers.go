@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -121,6 +122,36 @@ func handleHealth(serviceName string, maxLag time.Duration, db *bun.DB) http.Han
 		}
 
 		utils.HttpEncode(w, r, http.StatusOK, status)
+	})
+}
+
+type didServiceDoc struct {
+	ID              string `json:"id"`
+	ServiceEndpoint string `json:"serviceEndpoint"`
+	Type            string `json:"type"`
+}
+
+type didDoc struct {
+	Context []string        `json:"@context"`
+	ID      string          `json:"id"`
+	Service []didServiceDoc `json:"service"`
+}
+
+func handleWellKnownDid(serviceDid string, host string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		didDoc := didDoc{
+			Context: []string{"https://www.w3.org/ns/did/v1"},
+			ID: serviceDid,
+			Service: []didServiceDoc{
+				didServiceDoc{
+					ID: "#bsky_fg",
+					ServiceEndpoint: fmt.Sprintf("https://%s", host),
+					Type: "BskyFeedGenerator",
+				},
+			},
+		}
+
+		utils.HttpEncode(w, r, http.StatusOK, didDoc)
 	})
 }
 
