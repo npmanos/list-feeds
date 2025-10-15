@@ -98,7 +98,7 @@ type SubscriptionState struct {
 	Lag     time.Time `bun:",notnull,default:current_timestamp"`
 }
 
-func (ss *SubscriptionState) GetCursor(ctx context.Context, db *bun.DB) (int64, error) {
+func (ss *SubscriptionState) GetCursor(ctx context.Context, db bun.IDB) (int64, error) {
 	if err := db.NewSelect().Model(ss).Where("service = ?", ss.Service).Scan(ctx); err != nil {
 		return 1, err
 	}
