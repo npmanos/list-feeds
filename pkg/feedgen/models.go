@@ -88,6 +88,8 @@ type FeedBuilder interface {
 
 type baseFeed struct {
 	ListURI string
+	ServiceName string
+	MaxLag time.Duration
 	db *bun.DB
 }
 

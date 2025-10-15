@@ -13,7 +13,7 @@ func addRoutes(
 	db *bun.DB,
 ) {
 	mux.Handle("/xrpc/app.bsky.feed.describeFeedGenerator", handleDescribeFeedGen(*cfg))
-	mux.Handle("/xrpc/app.bsky.feed.getFeedSkeleton", handleGetFeedSkeleton(cfg.ListFeedConfigs, db))
-	mux.Handle("/_health", handleHealth(db))
+	mux.Handle("/xrpc/app.bsky.feed.getFeedSkeleton", handleGetFeedSkeleton(*cfg, db))
+	mux.Handle("/_health", handleHealth(cfg.ServiceConfig.ServiceDID))
 	mux.Handle("/", handleDefault())
 }

@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-func Map[T, U any](collection []T, fn func(T) (U, error)) ([]U, error) {
-	result := make([]U, len(collection))
-	for i, item := range collection {
+func Map[T, U any](slice []T, fn func(T) (U, error)) ([]U, error) {
+	result := make([]U, len(slice))
+	for i, item := range slice {
 		output, err := fn(item)
 		if err != nil {
 			return nil, err
@@ -17,6 +17,15 @@ func Map[T, U any](collection []T, fn func(T) (U, error)) ([]U, error) {
 	}
 
 	return result, nil
+}
+
+func Prepend[E any](slice []E, elem E) ([]E) {
+	var zero E
+	slice = append(slice, zero)
+	copy(slice[1:], slice)
+	slice[0] = elem
+
+	return slice
 }
 
 func BuildAtURI(did string, collection string, rKey string) string {

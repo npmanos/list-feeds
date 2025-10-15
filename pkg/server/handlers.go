@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/npmanos/list-feeds/pkg/config"
 	"github.com/npmanos/list-feeds/pkg/feedgen"
@@ -44,16 +45,18 @@ func handleDescribeFeedGen(cfg config.Config) http.Handler {
 	})
 }
 
-func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler {
+func handleGetFeedSkeleton(cfg config.Config, db *bun.DB) http.Handler {
 	var init sync.Once
 	feedMap := make(map[string]feedgen.FeedBuilder, 0)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		init.Do(func() {
-			for _, feedCfg := range cfg {
+			for _, feedCfg := range cfg.ListFeedConfigs {
 				if feedCfg.ChronologicalConfig.Enabled {
 					uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.ChronologicalConfig.Slug)
 					feedMap[uri] = feedgen.NewChronologicalFeed(
 						feedCfg.ListURI,
+						cfg.ServiceConfig.ServiceDID,
+						time.Duration(cfg.ServiceConfig.MaxLagSecs) * time.Second,
 						feedCfg.ChronologicalConfig,
 						db,
 					)
@@ -63,6 +66,8 @@ func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler
 					uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.PopularConfig.Slug)
 					feedMap[uri] = feedgen.NewPopularFeed(
 						feedCfg.ListURI,
+						cfg.ServiceConfig.ServiceDID,
+						time.Duration(cfg.ServiceConfig.MaxLagSecs) * time.Second,
 						feedCfg.PopularConfig,
 						db,
 					)
@@ -97,13 +102,13 @@ func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler
 	})
 }
 
-func handleHealth(db *bun.DB) http.Handler {
+func handleHealth(serviceName string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := struct {
-			status string `json:"status"`
-			lag int64 `json:"lag"`
+			Status string `json:"status"`
+			Lag int64 `json:"lag"`
 		} {
-			status: "ok",
+			Status: "ok",
 		}
 
 		utils.HttpEncode(w, r, http.StatusOK, status)
