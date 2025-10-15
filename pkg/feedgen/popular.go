@@ -3,6 +3,8 @@ package feedgen
 import (
 	"context"
 	"fmt"
+	"log"
+	"strconv"
 	"time"
 
 	"github.com/npmanos/list-feeds/pkg/config"
@@ -26,9 +28,21 @@ func NewPopularFeed(listURI string, feedConfig *config.PopularFeedConfig, db *bu
 	}
 }
 
+type popularSelect struct {
+	URI string `bun:"uri"`
+	Score float64 `bun:"score"`
+	Points int64 `bun:"points"`
+	CreatedAt time.Time `bun:"created_at"`
+}
+
 func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (*FeedSkeleton, error) {
 	db := f.db
 	weights := f.FeedConfig.Weights
+
+	parsedCursor, err := ParseCursor(cursor)
+	if err != nil {
+		log.Printf("unable to parse cursor %s, discarding: %v", cursor, err)
+	}
 
 	listIdQ := db.NewSelect().Model((*persist.List)(nil)).Column("id").Where("uri = ?", f.ListURI)
 	listMemberIdsQ := db.NewSelect().Model((*persist.ListToUser)(nil)).
@@ -73,13 +87,8 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		).Table("post_points").
 		Where("?.? > 0", bun.Ident("post_points"), bun.Ident("points"))
 	
-	type feedSelect struct {
-		URI string `bun:"uri"`
-		Score float64 `bun:"score"`
-		Points int64 `bun:"points"`
-		CreatedAt time.Time `bun:"created_at"`
-	}
-	var posts []feedSelect
+	
+	var posts []popularSelect
 	
 	query := db.NewSelect().
 		With("list_member_ids", listMemberIdsQ).
@@ -91,15 +100,32 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		Order("score DESC", "created_at DESC").
 		Limit(limit)
 	
+	if parsedCursor != nil {
+		cursorScore, err := strconv.ParseFloat(parsedCursor.ID, 64)
+		if err != nil {
+			log.Printf("unable to parse cursor %s, discarding: %v", cursor, err)
+		} else {
+			query = query.WhereGroup(" AND ", func(sq *bun.SelectQuery) *bun.SelectQuery {
+				return sq.Where("score < ?", cursorScore).
+					WhereGroup(" OR ", func(sq *bun.SelectQuery) *bun.SelectQuery {
+						return sq.Where("score = ?", cursorScore).Where("created_at < ?", parsedCursor.CreatedAt)
+					})
+			})
+		}
+	}
+	
 	if err := query.Scan(ctx, &posts); err != nil {
 		return nil, fmt.Errorf("unable to get posts to populate %s: %w", f.FeedConfig.Slug, err)
 	}
 
-	feedItems, _ := utils.Map(posts, func(fs feedSelect) (FeedPost, error) {
+	feedItems, _ := utils.Map(posts, func(fs popularSelect) (FeedPost, error) {
 		return FeedPost{PostURI: fs.URI}, nil
 	})
 
-	return &FeedSkeleton{Feed: feedItems}, nil
+	last_post := posts[len(posts) - 1]
+	newCursor := FeedCursor{CreatedAt: last_post.CreatedAt, ID: strconv.FormatFloat(last_post.Score, 'f', -1, 64)}
+
+	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }
 
 func (f *PopularFeed) pointsJoinQuery(model interface{}, col string, whereCol string, memberIdsSubq *bun.SelectQuery) *bun.SelectQuery {

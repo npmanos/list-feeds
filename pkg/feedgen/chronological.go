@@ -27,7 +27,7 @@ func NewChronologicalFeed(listURI string, feedConfig *config.ChronologicalFeedCo
 	}
 }
 
-type feedSelect struct {
+type chronSelect struct {
 	CID string `bun:"cid"`
 	URI string `bun:"uri"`
 	CreatedAt time.Time `bun:"created_at"`
@@ -67,7 +67,7 @@ func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit 
 		ColumnExpr("?TableAlias.uri AS repost_uri").
 		Where("reposter_id IN (?)", bun.In(userIds))
 	
-	var posts []feedSelect
+	var posts []chronSelect
 	query := db.NewSelect().
 		With("feed_posts", db.NewRaw("? UNION ALL ?", authoredSelect, repostSelect)).
 		Table("feed_posts").
@@ -87,7 +87,7 @@ func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit 
 		return nil, fmt.Errorf("unable to get posts to populate %s: %w", f.FeedConfig.Slug, err)
 	}
 	
-	feedItems, _ := utils.Map(posts, func(fs feedSelect) (FeedPost, error) {
+	feedItems, _ := utils.Map(posts, func(fs chronSelect) (FeedPost, error) {
 		var fp = FeedPost{PostURI: fs.URI}
 		if fs.RepostURI != "" {
 			fp.Reason = &PostReason{Type: ReasonRepost, Repost: fs.RepostURI}
