@@ -38,7 +38,7 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 	defer wg.Done()
 	log.Printf("Starting post op persister...")
 	var lastCursor int64 = 0
-	cursorUpdate := time.NewTicker(5 * time.Second)
+	cursorUpdate := time.NewTicker(2500 * time.Millisecond)
 	defer cursorUpdate.Stop()
 
 	for {
@@ -50,7 +50,8 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 			select {
 			case <-cursorUpdate.C:
 				if event.Cursor > lastCursor {
-					if fn := writeCursor(serviceName, event.Cursor); fn != nil {
+					lag := time.Since(time.UnixMicro(event.Cursor))
+					if fn := writeCursor(serviceName, event.Cursor, lag); fn != nil {
 						dbTxs <- fn
 						lastCursor = event.Cursor
 					}
@@ -471,11 +472,12 @@ func makeDeleteFn(uri string, model interface{}) TxFn {
 	}
 }
 
-func writeCursor(serviceName string, cursor int64) TxFn {
+func writeCursor(serviceName string, cursor int64, lag time.Duration) TxFn {
 	return func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewUpdate().Model((*SubscriptionState)(nil)).
 			Column("cursor").
 			Set("cursor = ?", cursor).
+			Set("lag = ?", lag).
 			Where("service = ?", serviceName).
 			Exec(ctx)
 

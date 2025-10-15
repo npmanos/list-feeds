@@ -105,3 +105,15 @@ func (ss *SubscriptionState) GetCursor(ctx context.Context, db bun.IDB) (int64, 
 
 	return ss.Cursor, nil
 }
+
+func GetLag(ctx context.Context, serviceName string, db bun.IDB) (time.Duration, error) {
+	var lag time.Duration
+	if err := db.NewSelect().Model((*SubscriptionState)(nil)).
+		Column("lag").
+		Where("service = ?", serviceName).
+		Scan(ctx, &lag); err != nil {
+			return 0, err
+		}
+	
+	return lag, nil
+}
