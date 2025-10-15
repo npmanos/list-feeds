@@ -60,8 +60,12 @@ func handleGetFeedSkeleton(cfg []config.ListFeedConfig, db *bun.DB) http.Handler
 				}
 
 				if feedCfg.PopularConfig.Enabled {
-					// uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.PopularConfig.Slug)
-					// TODO
+					uri := utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.PopularConfig.Slug)
+					feedMap[uri] = feedgen.NewPopularFeed(
+						feedCfg.ListURI,
+						feedCfg.PopularConfig,
+						db,
+					)
 				}
 			}
 		})
