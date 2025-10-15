@@ -95,7 +95,7 @@ type SubscriptionState struct {
 
 	Service string    `bun:",notnull,unique"`
 	Cursor  int64     `bun:",notnull,default:1"`
-	Lag     time.Time `bun:",notnull,default:current_timestamp"`
+	Lag     time.Duration `bun:",notnull,default:0"`
 }
 
 func (ss *SubscriptionState) GetCursor(ctx context.Context, db bun.IDB) (int64, error) {
