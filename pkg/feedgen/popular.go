@@ -61,6 +61,9 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 			weights.Likes,
 			weights.Reposts,
 			weights.Replies,
+		).ColumnExpr(
+			"CASE WHEN ?TableAlias.author_id IN (?) THEN 1 ELSE 0 END AS is_list_member",
+			inMemberIds,
 		).Join(
 			"LEFT JOIN (?) AS likes",
 			f.pointsJoinQuery((*persist.Like)(nil), "post_id", "liker_id", inMemberIds),
@@ -81,11 +84,13 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 			`(?0.?1) / POW(
 				(unixepoch('now') - unixepoch(?0.?2)) / 3600.0 + 2,
 				?3
-			) AS score`,
+			) * CASE WHEN ?0.?4 = 1 THEN ?5 ELSE 1.0 END AS score`,
 			bun.Ident("post_points"),
 			bun.Ident("points"),
 			bun.Ident("created_at"),
 			weights.Gravity,
+			bun.Ident("is_list_member"),
+			weights.MemberMultiplier,
 		).Table("post_points").
 		Where("?.? > 0", bun.Ident("post_points"), bun.Ident("points"))
 	
