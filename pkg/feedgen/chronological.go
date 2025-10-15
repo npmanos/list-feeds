@@ -110,8 +110,12 @@ func (f *ChronologicalFeed) BuildFeed(ctx context.Context, cursor string, limit 
 		}
 	}
 
-	lastPost := posts[len(posts)-1]
-	newCursor := FeedCursor{CreatedAt: lastPost.CreatedAt, ID: lastPost.CID}
+	var newCursor FeedCursor
+	if len(posts) > 0 {
+		lastPost := posts[len(posts)-1]
+		newCursor.CreatedAt = lastPost.CreatedAt
+		newCursor.ID = lastPost.CID
+	}
 
 	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }

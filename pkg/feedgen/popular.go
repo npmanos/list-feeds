@@ -136,8 +136,12 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		}
 	}
 
-	last_post := posts[len(posts) - 1]
-	newCursor := FeedCursor{CreatedAt: last_post.CreatedAt, ID: strconv.FormatFloat(last_post.Score, 'f', -1, 64)}
+	var newCursor FeedCursor
+	if len(posts) > 0 {
+		last_post := posts[len(posts) - 1]
+		newCursor.CreatedAt = last_post.CreatedAt
+		newCursor.ID = strconv.FormatFloat(last_post.Score, 'f', -1, 64)
+	}
 
 	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }
