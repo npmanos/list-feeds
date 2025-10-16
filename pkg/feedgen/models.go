@@ -70,12 +70,12 @@ const (
 
 type PostReason struct {
 	Type SkeletonReason `json:"$type"`
-	Repost string `json:"repost,omitzero"`
+	Repost string `json:"repost,omitempty"`
 }
 
 type FeedPost struct {
 	PostURI string `json:"post"`
-	Reason *PostReason `json:"reason,omitzero"`
+	Reason *PostReason `json:"reason,omitempty"`
 }
 
 type FeedSkeleton struct {
