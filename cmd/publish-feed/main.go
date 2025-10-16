@@ -27,7 +27,7 @@ func main() {
 	cmd := cli.Command{
 		Name: "publish-feed",
 		Usage: "list feed publisher",
-		Version: "2025.0.0-dev",
+		Version: "2025.1.0",
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag {
 				Name: "feed",
