@@ -38,8 +38,24 @@ func handleDescribeFeedGen(cfg config.Config) http.Handler {
 			var feeds []feedgen.FeedURI
 			desc = feedgen.FeedGenDescription{DID: cfg.ServiceConfig.ServiceDID, Feeds: feeds}
 
-			for _, feed := range cfg.ListFeedConfigs {
-				desc.Feeds = append(desc.Feeds, feedgen.FeedURI{URI: feed.ListURI})
+			for _, feedCfg := range cfg.ListFeedConfigs {
+				if feedCfg.ChronologicalConfig.Enabled {
+					desc.Feeds = append(
+						desc.Feeds,
+						feedgen.FeedURI{
+							URI: utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.ChronologicalConfig.Slug),
+						},
+					)
+				}
+
+				if feedCfg.PopularConfig.Enabled {
+					desc.Feeds = append(
+						desc.Feeds,
+						feedgen.FeedURI{
+							URI: utils.BuildAtURI(feedCfg.FeedDID, "app.bsky.feed.generator", feedCfg.PopularConfig.Slug),
+						},
+					)
+				}
 			}
 		})
 
