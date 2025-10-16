@@ -33,7 +33,7 @@ func NewPopularFeed(listURI string, serviceName string, maxLag time.Duration, fe
 type popularSelect struct {
 	URI string `bun:"uri"`
 	Score float64 `bun:"score"`
-	Points int64 `bun:"points"`
+	Points float64 `bun:"points"`
 	CreatedAt time.Time `bun:"created_at"`
 }
 
