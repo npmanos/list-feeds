@@ -1,0 +1,45 @@
+service:
+  host: atproto.example.com
+
+  # Only use this if you want a service did different from did:web
+  # service_did: "did:plc:abcde..."
+  
+  # Maximum age of db records, in days
+  max_age: 3
+
+  # Maximum lag before lag message is pinned to feed, in seconds
+  max_lag: 30
+
+# Custom Jetstream instances
+# jetstream_hosts:
+#   - jetstream.example.com
+
+db:
+  type: sqlite
+  path: ./data/feed-data.db
+  debug: false
+
+feeds:
+  - list_uri: at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.list/3lvpca43j5z26
+    feed_did: did:plc:ffhsvgvnjwkbbhoi62pezi4x
+    chronological:
+      enabled: true
+      name: Community Showcase
+      slug: community-showcase
+      avatar: ./data/img/community_showcase.jpg
+      description: "Community projects built on the Bluesky API ✨"
+      lag_post: at://did:plc:phwfvz7yq3ulxhwjhqwccb2k/app.bsky.feed.post/3l3esgrdshq2x
+    popular:
+      enabled: true
+      name: Popular on Community Showcase
+      slug: popular-community-showcase
+      avatar: ./data/img/community_showcase.jpg
+      description: "Posts popular with community projects built on the Bluesky API ✨"
+      lag_post: at://did:plc:phwfvz7yq3ulxhwjhqwccb2k/app.bsky.feed.post/3l3esgrdshq2x
+      weights:
+        likes: 2.0
+        replies: 1.0
+        reposts: 10.0
+        list_member: 1.25 # Increase this to boost posts from list members
+        newness: 1.8 # Increase this to boost newer posts
+      max_age: 24.0 # Oldest posts to include in hours
