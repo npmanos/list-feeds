@@ -20,10 +20,10 @@ COPY . .
 # TARGETOS and TARGETARCH are automatically provided by docker buildx.
 ARG TARGETOS
 ARG TARGETARCH
-RUN RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/list-feeds ./cmd/list-feeds
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/list-feeds ./cmd/list-feeds
 
 # Build the publisher utility binary as well.
-RUN RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/publish-feed ./cmd/publish-feed
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/publish-feed ./cmd/publish-feed
 
 
 # --- Final Stage ---
