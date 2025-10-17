@@ -82,9 +82,9 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		Column("post_points.uri", "post_points.points", "post_points.created_at").
 		ColumnExpr(
 			`(?0.?1) / POW(
-				(unixepoch('now') - unixepoch(?0.?2)) / 3600.0 + 2,
+				(unixepoch('now') - unixepoch(?0.?2)) / 1800 + 2,
 				?3
-			) * CASE WHEN ?0.?4 = 1 THEN ?5 ELSE 1.0 END AS score`,
+			) * (CASE WHEN ?0.?4 = 1 THEN ?5 ELSE 1.0 END) AS score`,
 			bun.Ident("post_points"),
 			bun.Ident("points"),
 			bun.Ident("created_at"),
