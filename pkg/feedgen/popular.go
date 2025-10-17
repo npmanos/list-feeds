@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -57,7 +58,7 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 		ColumnExpr("?TableAlias.id AS post_id").
 		Column("uri", "created_at").
 		ColumnExpr(
-			"(COALESCE(likes.count, 0) * ? + COALESCE(reposts.count, 0) * ? + COALESCE(replies.count, 0) * ?) AS points",
+			"(COALESCE(likes.count, 0) * ? + COALESCE(reposts.count, 0) * ? + COALESCE(replies.count, 0) * ?) * 1.0 AS points",
 			weights.Likes,
 			weights.Reposts,
 			weights.Replies,
@@ -66,25 +67,25 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 			inMemberIds,
 		).Join(
 			"LEFT JOIN (?) AS likes",
-			f.pointsJoinQuery((*persist.Like)(nil), "post_id", "liker_id", inMemberIds),
+			f.pointsJoinQuery((*persist.Like)(nil), "Post", "post_id", "liker_id", inMemberIds),
 		).JoinOn("?TableAlias.id = likes.post_id").
 		Join(
 			"LEFT JOIN (?) AS reposts",
-			f.pointsJoinQuery((*persist.Repost)(nil), "post_id", "reposter_id", inMemberIds),
+			f.pointsJoinQuery((*persist.Repost)(nil), "Post", "post_id", "reposter_id", inMemberIds),
 		).JoinOn("?TableAlias.id = reposts.post_id").
 		Join(
 			"LEFT JOIN (?) AS replies",
-			f.pointsJoinQuery((*persist.Post)(nil), "reply_parent_id", "author_id", inMemberIds).
-				Where("reply_parent_id IS NOT NULL"),
+			f.pointsJoinQuery((*persist.Post)(nil), "ReplyParent", "reply_parent_id", "author_id", inMemberIds).
+				Where("?TableAlias.reply_parent_id IS NOT NULL"),
 		).JoinOn("?TableAlias.id = replies.reply_parent_id")
 	
 	rankedPostsQ := db.NewSelect().
 		Column("post_points.uri", "post_points.points", "post_points.created_at").
 		ColumnExpr(
 			`(?0.?1) / POW(
-				(unixepoch('now') - unixepoch(?0.?2)) / 3600.0 + 2,
+				(unixepoch('now') - unixepoch(?0.?2)) / 1800 + 2.0,
 				?3
-			) * CASE WHEN ?0.?4 = 1 THEN ?5 ELSE 1.0 END AS score`,
+			) * (CASE WHEN ?0.?4 = 1 THEN ?5 ELSE 1.0 END) AS score`,
 			bun.Ident("post_points"),
 			bun.Ident("points"),
 			bun.Ident("created_at"),
@@ -151,11 +152,22 @@ func (f *PopularFeed) BuildFeed(ctx context.Context, cursor string, limit int) (
 	return &FeedSkeleton{Cursor: &newCursor, Feed: feedItems}, nil
 }
 
-func (f *PopularFeed) pointsJoinQuery(model interface{}, col string, whereCol string, memberIdsSubq *bun.SelectQuery) *bun.SelectQuery {
+func (f *PopularFeed) pointsJoinQuery(
+	model interface{},
+	postRelation string,
+	col string,
+	whereCol string,
+	memberIdsSubq *bun.SelectQuery,
+) *bun.SelectQuery {
+	table := f.db.Dialect().Tables().Get(utils.IndirectType(reflect.TypeOf(model)))
+	relationField := table.Relations[postRelation].Field
+
 	return f.db.NewSelect().
 		Model(model).
+		Relation(postRelation).
 		Column(col).
 		ColumnExpr("COUNT(*) AS count").
-		Where("? IN (?)", bun.Ident(whereCol), memberIdsSubq).
-		Group(col)
+		Where("?TableAlias.? IN (?)", bun.Ident(whereCol), memberIdsSubq).
+		Where("?.? != ?TableAlias.?", bun.Ident(relationField.Name), bun.Ident("author_id"), bun.Ident(whereCol)).
+		GroupExpr("?TableAlias.?", bun.Ident(col))
 }

@@ -83,7 +83,7 @@ This is the easiest way to run the service.
 3. **Run the container** using Docker Compose. A sample `compose-sample.yaml` is provided. Copy it to compose.yaml and modify if needed. Then run:
 
     ```sh
-    docker-compose up -d
+    docker compose up -d
     ```
 
 ### Compiling and Running Locally
@@ -122,7 +122,7 @@ If you are running the application with Docker, you can use `docker-compose` to 
 3. Run the command, passing your app password using the -p flag. It will use the configuration from your mounted `/data` volume.
 
     ```sh
-    docker-compose run --rm bsky-list-feeds \
+    docker compose run --rm bsky-list-feeds \
       /publish-feed -p "YOUR_APP_PASSWORD"
     ```
 

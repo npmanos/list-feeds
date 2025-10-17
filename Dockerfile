@@ -4,11 +4,12 @@ FROM golang:1.24-alpine AS builder
 
 # Set the working directory inside the container
 WORKDIR /app
+RUN go env -w GOMODCACHE=/root/.cache/go-build
 
 # Copy go.mod and go.sum files to leverage Docker's layer caching.
 # This step only re-runs if the dependencies change.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/root/.cache/go-build go mod download
 
 # Copy the rest of the application's source code
 COPY . .
@@ -19,10 +20,10 @@ COPY . .
 # TARGETOS and TARGETARCH are automatically provided by docker buildx.
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/list-feeds ./cmd/list-feeds
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/list-feeds ./cmd/list-feeds
 
 # Build the publisher utility binary as well.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/publish-feed ./cmd/publish-feed
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /bin/publish-feed ./cmd/publish-feed
 
 
 # --- Final Stage ---
