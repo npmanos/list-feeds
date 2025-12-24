@@ -20,9 +20,9 @@ func TestNewShardedJetstreamConsumer(t *testing.T) {
 
 	consumer, shardIDs := NewShardedJetstreamConsumer(config)
 
-	// TargetShardSize is 5000 (internal constant)
-	// 12000 / 5000 = 2.4 -> 3 shards
-	expectedShards := 3
+	// TargetShardSize is 150 (now)
+	// 12000 / 150 = 80 shards
+	expectedShards := 80
 
 	if len(consumer.consumers) != expectedShards {
 		t.Fatalf("expected %d consumers, got %d", expectedShards, len(consumer.consumers))
@@ -36,13 +36,10 @@ func TestNewShardedJetstreamConsumer(t *testing.T) {
 	totalDIDs := 0
 	for _, c := range consumer.consumers {
 		totalDIDs += len(c.config.WantedDids)
-		if len(c.config.WantedDids) > 5000 {
+		if len(c.config.WantedDids) > 150 {
              // It's allowed to be slightly more if we just round-robin or chunk?
              // My implementation used round-robin (modulo).
-             // 12000 / 3 = 4000.
-             // Wait, implementation:
-             // numShards := (len(dids) / TargetShardSize) + 1  => 12000/5000 + 1 = 2+1=3.
-             // distribution: i % numShards.
+             // 12000 / 80 = 150.
              // So it should be perfectly balanced.
 		}
 	}

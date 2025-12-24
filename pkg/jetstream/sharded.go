@@ -15,11 +15,12 @@ type ShardedJetstreamConsumer struct {
 func NewShardedJetstreamConsumer(
 	config *JetstreamConfig,
 ) (*ShardedJetstreamConsumer, []string) {
-	// Target ~5000 DIDs per shard to allow room for growth up to 10k
-	const TargetShardSize = 5000
+	// Target ~150 DIDs per shard to prevent the subscription URL from exceeding
+	// common server limits (usually 8KB). 150 DIDs * ~45 chars ≈ 6.7KB.
+	const TargetShardSize = 150
 
 	dids := config.WantedDids
-	numShards := (len(dids) / TargetShardSize) + 1
+	numShards := (len(dids) + TargetShardSize - 1) / TargetShardSize
 	// Ensure at least a few shards if we expect growth, but for now just fit data
 	if numShards < 1 {
 		numShards = 1
