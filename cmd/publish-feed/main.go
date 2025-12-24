@@ -55,7 +55,7 @@ func main() {
 	cmd.Action = func(ctx context.Context, c *cli.Command) error {
 		cfg, err := config.LoadConfig(configFile)
 		if err != nil {
-			log.Fatalf("unable to load config: %v")
+			log.Fatalf("unable to load config: %v", err)
 		}
 
 		feedCfgs := make([]config.ListFeedConfig, len(cfg.ListFeedConfigs))
