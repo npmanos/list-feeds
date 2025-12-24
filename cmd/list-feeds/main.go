@@ -93,9 +93,6 @@ func main() {
 
 	postOpEvents := make(chan *jetstream.Event)
 
-	wg.Add(1)
-	go persist.StartPostOpPersister(ctx, serviceName, postOpEvents, dbTxs, wg)
-
 	subState := persist.SubscriptionState{Service: serviceName}
 	cursor, err := subState.GetCursor(ctx, db)
 	if err != nil {
@@ -108,7 +105,7 @@ func main() {
 
 	didUpdates := make(chan *jetstream.ListMemberUpdate)
 
-	postConsumer := jetstream.NewJetstreamConsumer(&jetstream.JetstreamConfig{
+	postConsumer, shardIDs := jetstream.NewShardedJetstreamConsumer(&jetstream.JetstreamConfig{
 		Name:              "Post consumer",
 		Hosts:             cfg.JetstreamHosts,
 		Cursor:            cursor,
@@ -119,6 +116,9 @@ func main() {
 		EventsChannel:     postOpEvents,
 		WantedDidsUpdates: didUpdates,
 	})
+
+	wg.Add(1)
+	go persist.StartPostOpPersister(ctx, serviceName, postOpEvents, dbTxs, wg, shardIDs)
 
 	listMemberEvents := make(chan *jetstream.Event)
 	wg.Add(1)
