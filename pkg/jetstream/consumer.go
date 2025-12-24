@@ -76,6 +76,7 @@ type ListMemberUpdate struct {
 
 type JetstreamConfig struct {
 	Name              string
+	ShardID           string
 	Hosts             []string
 	Cursor            int64
 	WantedDids        []string
@@ -179,6 +180,9 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 			}
 		}()
 
+		heartbeatTicker := time.NewTicker(time.Second)
+		defer heartbeatTicker.Stop()
+
 	dispatchLoop:
 		for {
 			if c.config.WantedDidsUpdates != nil {
@@ -208,6 +212,12 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 				log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
 				conn.Close()
 				return
+			case <-heartbeatTicker.C:
+				c.config.EventsChannel <- &Event{
+					Kind:    HeartbeatEvent,
+					Cursor:  time.Now().Add(-5 * time.Second).UnixMicro(),
+					ShardID: c.config.ShardID,
+				}
 			case msg := <-readChan:
 				if msg.err != nil {
 					log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
@@ -219,6 +229,7 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 					if err != nil {
 						log.Printf("%s: Error unmarshaling jetstream event: %v", c.config.Name, err)
 					}
+					event.ShardID = c.config.ShardID
 					c.config.Cursor = event.Cursor
 					c.config.EventsChannel <- event
 				}

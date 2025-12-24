@@ -64,9 +64,10 @@ type Commit struct {
 type EventKind string
 
 const (
-	CommitEvent   EventKind = "commit"
-	IdentityEvent EventKind = "identity"
-	AccountEvent  EventKind = "account"
+	CommitEvent    EventKind = "commit"
+	IdentityEvent  EventKind = "identity"
+	AccountEvent   EventKind = "account"
+	HeartbeatEvent EventKind = "heartbeat"
 )
 
 type Event struct {
@@ -76,6 +77,7 @@ type Event struct {
 	Commit   Commit         `json:"commit,omitzero"`
 	Identity map[string]any `json:"identity,omitempty"`
 	Account  map[string]any `json:"account,omitempty"`
+	ShardID  string         `json:"-"`
 }
 
 func recordDecodeHook() mapstructure.DecodeHookFunc {
