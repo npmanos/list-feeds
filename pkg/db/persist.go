@@ -1,6 +1,7 @@
 package db
 
 import (
+	"container/heap"
 	"context"
 	"database/sql"
 	"errors"
@@ -18,6 +19,26 @@ import (
 	appbsky "github.com/bluesky-social/indigo/api/bsky"
 )
 
+type EventHeap []*jetstream.Event
+
+func (h EventHeap) Len() int           { return len(h) }
+func (h EventHeap) Less(i, j int) bool { return h[i].Cursor < h[j].Cursor }
+func (h EventHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *EventHeap) Push(x any)        { *h = append(*h, x.(*jetstream.Event)) }
+func (h *EventHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+func (h EventHeap) Peek() *jetstream.Event {
+	if len(h) == 0 {
+		return nil
+	}
+	return h[0]
+}
+
 func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Printf("Starting db writer...")
@@ -34,12 +55,26 @@ func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.
 	}
 }
 
-func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
+func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup, shardIDs []string) {
 	defer wg.Done()
 	log.Printf("Starting post op persister...")
 	var lastCursor int64 = 0
 	cursorUpdate := time.NewTicker(2500 * time.Millisecond)
 	defer cursorUpdate.Stop()
+
+	// Need to initialize lastCursor from somewhere? 
+	// The caller sets up the consumer with a cursor, but we don't know it here.
+	// Ideally we fetch it or it's passed.
+	// But `StartPostOpPersister` logic before just started at 0 and updated if `event.Cursor > lastCursor`.
+	// So we keep that.
+	
+	eventBuffer := &EventHeap{}
+	heap.Init(eventBuffer)
+
+	shardCursors := make(map[string]int64)
+	for _, id := range shardIDs {
+		shardCursors[id] = 0
+	}
 
 	for {
 		select {
@@ -47,53 +82,93 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 			log.Printf("Stopping post op persister...")
 			return
 		case event := <-events:
-			select {
-			case <-cursorUpdate.C:
-				if event.Cursor > lastCursor {
-					lag := time.Since(time.UnixMicro(event.Cursor))
-					if fn := writeCursor(serviceName, event.Cursor, lag); fn != nil {
-						dbTxs <- fn
-						lastCursor = event.Cursor
-					}
-				}
-
-			default:
+			// Update shard cursor knowledge
+			if event.ShardID != "" {
+				shardCursors[event.ShardID] = event.Cursor
 			}
 
-			switch event.Kind {
-			case jetstream.AccountEvent, jetstream.IdentityEvent:
-				continue
-			case jetstream.CommitEvent:
-				commit := event.Commit
+			if event.Kind == jetstream.HeartbeatEvent {
+				// Just update safe cursor logic
+			} else {
+				heap.Push(eventBuffer, event)
+			}
 
-				if commit.Operation == jetstream.CommitDelete {
-					if fn := deletePostOpRecord(event); fn != nil {
-						dbTxs <- fn
-					}
-
-					continue
+			// Calculate safe cursor
+			var minCursor int64 = -1
+			for _, id := range shardIDs {
+				c := shardCursors[id]
+				if minCursor == -1 || c < minCursor {
+					minCursor = c
 				}
+			}
+			
+			// If not all initialized, we assume minCursor is effectively 0 or we wait.
+			// But if we have 0 in shardCursors, minCursor will be 0.
+			
+			if minCursor == -1 {
+				minCursor = 0
+			}
 
-				switch commit.Record.(type) {
-				case jetstream.PostRecord:
-					if fn, err := persistPost(event); err != nil {
-						log.Printf("unable to save post: %v", err)
-					} else {
-						dbTxs <- fn
-					}
-				case jetstream.RepostRecord:
-					if fn, err := persistRepost(event); err != nil {
-						log.Printf("unable to save repost: %v", err)
-					} else {
-						dbTxs <- fn
-					}
-				case jetstream.LikeRecord:
-					if fn, err := persistLike(event); err != nil {
-						log.Printf("unable to save like: %v", err)
-					} else {
-						dbTxs <- fn
-					}
+			// Process events <= minCursor
+			for eventBuffer.Len() > 0 {
+				top := eventBuffer.Peek()
+				if top.Cursor <= minCursor {
+					heap.Pop(eventBuffer)
+					processEvent(top, serviceName, &lastCursor, cursorUpdate, dbTxs)
+				} else {
+					break
 				}
+			}
+		}
+	}
+}
+
+func processEvent(event *jetstream.Event, serviceName string, lastCursor *int64, cursorUpdate *time.Ticker, dbTxs chan<- TxFn) {
+	select {
+	case <-cursorUpdate.C:
+		if event.Cursor > *lastCursor {
+			lag := time.Since(time.UnixMicro(event.Cursor))
+			if fn := writeCursor(serviceName, event.Cursor, lag); fn != nil {
+				dbTxs <- fn
+				*lastCursor = event.Cursor
+			}
+		}
+
+	default:
+	}
+
+	switch event.Kind {
+	case jetstream.AccountEvent, jetstream.IdentityEvent:
+		return
+	case jetstream.CommitEvent:
+		commit := event.Commit
+
+		if commit.Operation == jetstream.CommitDelete {
+			if fn := deletePostOpRecord(event); fn != nil {
+				dbTxs <- fn
+			}
+
+			return
+		}
+
+		switch commit.Record.(type) {
+		case jetstream.PostRecord:
+			if fn, err := persistPost(event); err != nil {
+				log.Printf("unable to save post: %v", err)
+			} else {
+				dbTxs <- fn
+			}
+		case jetstream.RepostRecord:
+			if fn, err := persistRepost(event); err != nil {
+				log.Printf("unable to save repost: %v", err)
+			} else {
+				dbTxs <- fn
+			}
+		case jetstream.LikeRecord:
+			if fn, err := persistLike(event); err != nil {
+				log.Printf("unable to save like: %v", err)
+			} else {
+				dbTxs <- fn
 			}
 		}
 	}
