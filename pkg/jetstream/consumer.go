@@ -18,6 +18,9 @@ import (
 const (
 	backoffMultiplier = 2 * time.Second
 	maxBackoff        = 60 * time.Second
+	pongWait          = 60 * time.Second
+	pingPeriod        = (pongWait * 9) / 10
+	writeWait         = 10 * time.Second
 )
 
 var POST_COLLECTIONS = []string{"app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.feed.like"}
@@ -170,9 +173,18 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 		log.Printf("%s: Succesfully connected to %s", c.config.Name, host)
 
 		readChan := make(chan socketMessage)
+		
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		conn.SetPongHandler(func(string) error {
+			conn.SetReadDeadline(time.Now().Add(pongWait))
+			readChan <- socketMessage{messageType: websocket.PongMessage}
+			return nil
+		})
+
 		go func() {
 			for {
 				messageType, p, err := conn.ReadMessage()
+				conn.SetReadDeadline(time.Now().Add(pongWait))
 				readChan <- socketMessage{messageType, p, err}
 				if err != nil {
 					return
@@ -180,8 +192,8 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 			}
 		}()
 
-		heartbeatTicker := time.NewTicker(time.Second)
-		defer heartbeatTicker.Stop()
+		pingTicker := time.NewTicker(pingPeriod)
+		defer pingTicker.Stop()
 
 	dispatchLoop:
 		for {
@@ -212,18 +224,29 @@ func (c *JetstreamConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
 				log.Printf("%s: Disconnecting from Jetstream instance: %s", c.config.Name, host)
 				conn.Close()
 				return
-			case <-heartbeatTicker.C:
-				c.config.EventsChannel <- &Event{
-					Kind:    HeartbeatEvent,
-					Cursor:  time.Now().Add(-5 * time.Second).UnixMicro(),
-					ShardID: c.config.ShardID,
-				}
-			case msg := <-readChan:
-				if msg.err != nil {
-					log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, err)
+			case <-pingTicker.C:
+				conn.SetWriteDeadline(time.Now().Add(writeWait))
+				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(writeWait)); err != nil {
+					log.Printf("%s: Failed to send ping: %v", c.config.Name, err)
 					conn.Close()
 					break dispatchLoop
 				}
+			case msg := <-readChan:
+				if msg.err != nil {
+					log.Printf("%s: Connection to %s lost: %v", c.config.Name, host, msg.err)
+					conn.Close()
+					break dispatchLoop
+				}
+
+				if msg.messageType == websocket.PongMessage {
+					c.config.EventsChannel <- &Event{
+						Kind:    HeartbeatEvent,
+						Cursor:  time.Now().Add(-5 * time.Second).UnixMicro(),
+						ShardID: c.config.ShardID,
+					}
+					continue
+				}
+
 				if msg.messageType == websocket.TextMessage {
 					event, err := UnmarshalEvent(msg.p)
 					if err != nil {
