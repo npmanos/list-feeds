@@ -34,12 +34,14 @@ func StartDbWriter(ctx context.Context, db *bun.DB, dbTxs <-chan TxFn, wg *sync.
 	}
 }
 
-func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup) {
+func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan *jetstream.Event, dbTxs chan<- TxFn, wg *sync.WaitGroup, shardIDs []string) {
 	defer wg.Done()
 	log.Printf("Starting post op persister...")
 	var lastCursor int64 = 0
 	cursorUpdate := time.NewTicker(2500 * time.Millisecond)
 	defer cursorUpdate.Stop()
+
+	sequencer := NewSequencer(shardIDs)
 
 	for {
 		select {
@@ -47,53 +49,65 @@ func StartPostOpPersister(ctx context.Context, serviceName string, events <-chan
 			log.Printf("Stopping post op persister...")
 			return
 		case event := <-events:
-			select {
-			case <-cursorUpdate.C:
-				if event.Cursor > lastCursor {
-					lag := time.Since(time.UnixMicro(event.Cursor))
-					if fn := writeCursor(serviceName, event.Cursor, lag); fn != nil {
-						dbTxs <- fn
-						lastCursor = event.Cursor
-					}
-				}
+			sequencer.Push(event)
 
-			default:
+			for {
+				next := sequencer.Pop()
+				if next == nil {
+					break
+				}
+				processEvent(next, serviceName, &lastCursor, cursorUpdate, dbTxs)
+			}
+		}
+	}
+}
+
+func processEvent(event *jetstream.Event, serviceName string, lastCursor *int64, cursorUpdate *time.Ticker, dbTxs chan<- TxFn) {
+	select {
+	case <-cursorUpdate.C:
+		if event.Cursor > *lastCursor {
+			lag := time.Since(time.UnixMicro(event.Cursor))
+			if fn := writeCursor(serviceName, event.Cursor, lag); fn != nil {
+				dbTxs <- fn
+				*lastCursor = event.Cursor
+			}
+		}
+
+	default:
+	}
+
+	switch event.Kind {
+	case jetstream.AccountEvent, jetstream.IdentityEvent:
+		return
+	case jetstream.CommitEvent:
+		commit := event.Commit
+
+		if commit.Operation == jetstream.CommitDelete {
+			if fn := deletePostOpRecord(event); fn != nil {
+				dbTxs <- fn
 			}
 
-			switch event.Kind {
-			case jetstream.AccountEvent, jetstream.IdentityEvent:
-				continue
-			case jetstream.CommitEvent:
-				commit := event.Commit
+			return
+		}
 
-				if commit.Operation == jetstream.CommitDelete {
-					if fn := deletePostOpRecord(event); fn != nil {
-						dbTxs <- fn
-					}
-
-					continue
-				}
-
-				switch commit.Record.(type) {
-				case jetstream.PostRecord:
-					if fn, err := persistPost(event); err != nil {
-						log.Printf("unable to save post: %v", err)
-					} else {
-						dbTxs <- fn
-					}
-				case jetstream.RepostRecord:
-					if fn, err := persistRepost(event); err != nil {
-						log.Printf("unable to save repost: %v", err)
-					} else {
-						dbTxs <- fn
-					}
-				case jetstream.LikeRecord:
-					if fn, err := persistLike(event); err != nil {
-						log.Printf("unable to save like: %v", err)
-					} else {
-						dbTxs <- fn
-					}
-				}
+		switch commit.Record.(type) {
+		case jetstream.PostRecord:
+			if fn, err := persistPost(event); err != nil {
+				log.Printf("unable to save post: %v", err)
+			} else {
+				dbTxs <- fn
+			}
+		case jetstream.RepostRecord:
+			if fn, err := persistRepost(event); err != nil {
+				log.Printf("unable to save repost: %v", err)
+			} else {
+				dbTxs <- fn
+			}
+		case jetstream.LikeRecord:
+			if fn, err := persistLike(event); err != nil {
+				log.Printf("unable to save like: %v", err)
+			} else {
+				dbTxs <- fn
 			}
 		}
 	}

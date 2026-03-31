@@ -113,3 +113,6 @@ nohup.out
 # List feeds specific
 data/*
 !data/config-sample.yml
+
+.gemini/
+gha-creds-*.json
